@@ -1,0 +1,7 @@
+APPS
+__pycache__
+generated
+programs
+keys/*
+.DS_Store
+cache.json
