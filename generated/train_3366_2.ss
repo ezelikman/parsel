@@ -1,0 +1,16 @@
+nth_perm(n, d): nth_perm takes a positive integer n and a list of distinct elements d and returns the nth permutation of d.
+1,1 -> '0'
+12,5 -> '02431'
+1000,7 -> '1325460'
+1000,8 -> '02436571'
+1000000,10 -> '2783915460'
+874,7 -> '1234560'
+100,5 -> '40231'
+400,6 -> '314250'
+900,8 -> '02354761'
+3000000,10 -> '8241697530'
+1234567,10 -> '3469702158'
+654321,10 -> '1827653409'
+100000,9 -> '247815360'
+33333,8 -> '64157203'
+  permutations(d): permutations(d) returns a list of all permutations of the digits 0 through d-1, sorted in lexicographic order.

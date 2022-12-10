@@ -1,7 +1,8 @@
 APPS
 __pycache__
-generated
-programs
+programs/*
+!programs/game_of_life_inverse_simplestest.*
+!programs/collatz_simplest_full.*
 keys/*
 .DS_Store
 cache.json

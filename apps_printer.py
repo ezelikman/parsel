@@ -83,7 +83,7 @@ def main():
           starter = f.read()
       else:
         continue
-      if int(folder) <= 3599:
+      if int(folder) <= 3788:
         continue
       if os.path.isdir(os.path.join(apps_mode, folder)):
         with open(os.path.join(apps_mode, folder, 'solutions.json')) as f:
