@@ -21,7 +21,11 @@ class CodeGen():
     def generate(self,
         codex_in, num_completions=8, max_tokens=500, temperature=0.5, presence_penalty=0.0,
         stop=["\ndef"], indented=True, indented_after_first_line=False, require=None, cache_key=None,
+        rate_limit_tokens=4000, verbose=False
     ):
+        if verbose:
+            print(codex_in)
+            print("-----")
         assert isinstance(codex_in, str)
         cache_key_base = codex_in if cache_key is None else cache_key
         cache_key_list = (cache_key_base, max_tokens, temperature, stop, indented, indented_after_first_line, require)
@@ -38,28 +42,39 @@ class CodeGen():
             results = []
 
         print("Calling Codex!")
-        time.sleep(30)
-        completions = openai.Completion.create(
-            model="code-davinci-002",
-            prompt=codex_in,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            presence_penalty=presence_penalty,
-            stop=stop,
-            n=num_completions,
-        )['choices']
-        for completion in completions:
-            result = []
-            for line_idx, line in enumerate(completion.text.split("\n")):
-                if (indented or (indented_after_first_line and line_idx > 0)) and line.lstrip() == line and line.strip() != "":
+        total_tokens = num_completions * max_tokens
+        completions_per_call = rate_limit_tokens // max_tokens
+        while total_tokens > 0:
+            num_completions = min(total_tokens // max_tokens, completions_per_call)
+            print(num_completions, "completions", max_tokens, "tokens each")
+            while True:
+                try:
+                    time.sleep(31)
+                    completions = openai.Completion.create(
+                        model="code-davinci-002",
+                        prompt=codex_in,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        presence_penalty=presence_penalty,
+                        stop=stop,
+                        n=num_completions,
+                    )['choices']
                     break
-                if require is not None and line.strip() != "" and require not in line:
-                    break
-                result += [line]
-            results.append(result)
+                except openai.error.RateLimitError:
+                    print("Rate limit reached. Waiting before retrying...")
+            for completion in completions:
+                result = []
+                for line_idx, line in enumerate(completion.text.split("\n")):
+                    if (indented or (indented_after_first_line and line_idx > 0)) and line.lstrip() == line and line.strip() != "":
+                        break
+                    if require is not None and line.strip() != "" and require not in line:
+                        break
+                    result += [line]
+                results.append(result)
 
-        # Save updated cache
-        self.cache[cache_key] = results
-        with open(self.cache_file, "w") as f:
-            json.dump(self.cache, f, indent=4)
+            # Save updated cache
+            self.cache[cache_key] = results
+            with open(self.cache_file, "w") as f:
+                json.dump(self.cache, f, indent=4)
+            total_tokens -= num_completions * max_tokens
         return results

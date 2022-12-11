@@ -1,11 +1,12 @@
 from consts import CONSTS
 
 class Function:
-    def __init__(self, name, args, ret, desc, parent, asserts):
+    def __init__(self, name, args, ret, desc, parent, asserts, prefix=''):
         self.name = name
         self.args = args
         self.ret = ret
         self.desc = desc
+        self.prefix = prefix
         if parent is None:
             self.parents = []
         else:
@@ -20,8 +21,13 @@ class Function:
 
     def get_codex_input(self):
         base_str = ""
+        base_str += self.prefix
+        already_listed = [self.name]
         for child in self.children:
-            ret_str = (" -> " + ", ".join(child.ret))# if child.ret else ""
+            if child.name in already_listed:
+                continue
+            already_listed.append(child.name)
+            ret_str = (" -> " + ", ".join(child.ret)) if child.ret else ""
             base_str += f"from helpers import {child.name}\n"
             base_str += f"# Description: {child.desc}\n"
             base_str += f"# Signature: {child.name}({', '.join(child.args)}){ret_str}\n"
@@ -30,9 +36,10 @@ class Function:
             base_str += CONSTS["desc_helper"].format(desc=self.desc)
         if self.ret and ', '.join(self.ret):
             base_str += CONSTS["ret_helper"].format(ret=', '.join(self.ret))
-        if self.children:
+        other_children = [child for child in self.children if child.name != self.name]
+        if other_children:
             base_str += CONSTS["use_helper"].format(
-                uses=', '.join([child.name for child in self.children]))
+                uses=', '.join([child.name for child in other_children]))
         base_str += f"{self.header()}:\n"
         return base_str
 
@@ -54,11 +61,14 @@ class Function:
     def implement(self, codex):
         self.implementations = codex.generate(
             codex_in=self.get_codex_input(),
-            num_completions=8,
-            max_tokens=500,
-            # num_completions=16,
+            # num_completions=8,
+            # max_tokens=500,
+            # num_completions=32,
             # max_tokens=250,
-            temperature=0.5,
+            # temperature=0.5,
+            num_completions=16,
+            max_tokens=500,
+            temperature=0.2,
             stop=["\ndef"],
             indented=True,
             indented_after_first_line=False,
@@ -310,7 +320,9 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
     fn_name, fn_args, fn_ret, desc = parse_line(line.strip())
     if fn_name in scope:
         if fn_args is not None:
-            raise RuntimeError(f"Function {fn_name} already defined")
+            print(f"Warning: Function {fn_name} already defined")
+            return defined_fns[fn_name]
+            # raise RuntimeError(f"Function {fn_name} already defined")
         new_fn = defined_fns[fn_name]
         if parent is not None:
             new_fn.parents.append(parent)

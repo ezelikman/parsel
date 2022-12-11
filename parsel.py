@@ -50,6 +50,7 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
             exec_implementation_attempt += CONSTS["output_fn"].format(output_str=assert_in)
         exec_implementation_attempt += assert_str
         if verbose:
+            print("--------")
             print(exec_implementation_attempt)
         try:
             exec(exec_implementation_attempt, locals())
@@ -210,6 +211,13 @@ def write_to_file(filename, defined_fns):
         f.write(contents)
     print("Done writing to " + str(filename))
 
+def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False):
+    sccs, scc_edges = strongly_connected_components(defined_fns)
+    implemented_sccs = []
+    for scc_idx, _ in enumerate(sccs):
+        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand)
+    return defined_fns
+
 def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
@@ -218,10 +226,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
     with open(source_file, "r") as f:
         program = f.readlines()
     _, defined_fns = get_graph(program)
-    sccs, scc_edges = strongly_connected_components(defined_fns)
-    implemented_sccs = []
-    for scc_idx, _ in enumerate(sccs):
-        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand)
+    defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand)
     write_to_file(target_file, defined_fns)
 
 if __name__ == "__main__":
