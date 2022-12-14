@@ -206,9 +206,10 @@ def test_script(gen_script, strict = False):
     
     
     print(able_to_be_parsed, able_to_be_executed)
-    assert able_to_be_parsed
-    assert able_to_be_executed
-
+    # assert able_to_be_parsed
+    # assert able_to_be_executed
+    if not (able_to_be_parsed and able_to_be_executed):
+        return False
     if strict:
         ### execution check; too expensive for on the fly
         script = ["<char0> " + s for s in script]
@@ -223,15 +224,17 @@ def test_script(gen_script, strict = False):
                                     save_pose_data=False,
                                     file_name_prefix='relax')
         print(message)
-        assert success
+        return success
+    else:
+        return True
 
 if __name__ == "__main__":
     
     
     from programs.saycan import task_plan
     gen_script = task_plan()
-    gen_script = ['grab mug']
-    # gen_script = [ 'grab bread']
+    # gen_script = ['grab mug']
+    gen_script = gen_script
     test_script(gen_script, strict = True)            
 
    

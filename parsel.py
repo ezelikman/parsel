@@ -245,7 +245,7 @@ def write_to_file(filename, defined_fns):
         fn_defs += CONSTS['full_fn_str'].format(
             desc=fn.desc, fn_impl=fn.fixed_implementation)
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
-    # assert CONSTS['exist_asserts'](asserts)
+    assert CONSTS['exist_asserts'](asserts)
     contents = f"{fn_defs}\n{asserts}"
     with open(filename, "w") as f:
         print("Writing to " + str(filename))

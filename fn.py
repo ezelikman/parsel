@@ -53,8 +53,8 @@ class Function:
             assert_out = assert_out.strip()
             assert_str += CONSTS["assert_format"].format(
                 name=self.name, assert_in=assert_in, assert_out=assert_out)
-        if len(self.args) == 0: 
-            assert_str += f"from execute_virtual_home import test_script;test_script({self.name}())\n"
+        # if len(self.args) == 0: 
+        #     assert_str += f"from execute_virtual_home import test_script;test_script({self.name}())\n"
         return assert_str
     
     def get_implementation_strs(self):

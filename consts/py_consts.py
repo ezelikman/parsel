@@ -6,7 +6,8 @@ CONSTS = {
     "desc_helper": "# Description: {desc}\n",
     "ret_helper": "# Returns: {ret}\n",
     "use_helper": "# Uses: {uses}\n",
-    "assert_format": "assert repr(str({name}({assert_in}))) == repr({assert_out})\n",
+    # "assert_format": "assert repr(str({name}({assert_in}))) == repr({assert_out})\n",
+    "assert_format": "from execute_virtual_home import test_script;assert test_script({name}({assert_in}))\n",
     "describe_helper":  "# Reviewer:\n"
                         "# Please explain the above function in one sentence with as much detail as possible.\n"
                         "# In your one-sentence description, specify the range and domain of your function precisely.\n"
