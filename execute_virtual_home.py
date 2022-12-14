@@ -209,7 +209,7 @@ def test_script(gen_script, strict = False):
     # assert able_to_be_parsed
     # assert able_to_be_executed
     if not (able_to_be_parsed and able_to_be_executed):
-        return False
+        return "not executable"
     if strict:
         ### execution check; too expensive for on the fly
         script = ["<char0> " + s for s in script]
@@ -224,9 +224,9 @@ def test_script(gen_script, strict = False):
                                     save_pose_data=False,
                                     file_name_prefix='relax')
         print(message)
-        return success
-    else:
-        return True
+        if not success:
+            return "not executable"
+    return "executable"
 
 if __name__ == "__main__":
     
