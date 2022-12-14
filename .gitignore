@@ -2,6 +2,7 @@ APPS
 __pycache__
 programs/*
 !programs/game_of_life_inverse_expand.*
+!programs/game_of_life_inverse_fill.*
 !programs/collatz_simplest_full.*
 !programs/problem_solving.*
 !programs/and_commute.*
