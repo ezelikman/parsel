@@ -1,13 +1,21 @@
 CONSTS = {
+    "needs_indent": True,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],
     "fn_end": "return",
-    "header_str": "def {name}({args})",
+    "gen_stop": ["\ndef"],
+    "import": "from helpers import {name}\n",
+    "header_str": lambda name, args: f"def {name}({', '.join(args)})",
+    "sig_helper": "# Signature: {sig}\n",
     "desc_helper": "# Description: {desc}\n",
     "ret_helper": "# Returns: {ret}\n",
     "use_helper": "# Uses: {uses}\n",
-    "assert_format": "assert repr(str({name}({assert_in}))) == repr({assert_out})\n",
-    "describe_helper":  "# Reviewer:\n"
+    "impl_helper": "{header}:\n{impls}",
+    "assert_helper": lambda _: "",
+    "assert_check": lambda line: "->" in line and "(" not in line.split("->")[0],
+    "assert_break": lambda cur_assert: (cur_assert.split("->")[0].strip(), cur_assert.split("->")[1].strip()),
+    "assert_format": "assert repr(str({name}({assert_in}))) == repr(str({assert_out}))\n",
+    "explain_helper":  "# Reviewer:\n"
                         "# Please explain the above function in one sentence with as much detail as possible.\n"
                         "# In your one-sentence description, specify the range and domain of your function precisely.\n"
                         "# Your description should be clear enough that someone could reimplement the function from it.\n"
@@ -29,4 +37,7 @@ CONSTS = {
     "full_fn_str": "# {desc}\n{fn_impl}\n",
     "get_assert_in": lambda assert_str: assert_str.split('==')[0].replace('assert', '').strip(),
     "exist_asserts": lambda assert_str: 'assert' in assert_str,
+    "exec": lambda code: exec(code, locals()),
+    "impl_filter": lambda _: True,
+    "implicit_assert": False,
 }

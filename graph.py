@@ -1,4 +1,5 @@
 from fn import Function, parse_to_fn
+from consts import CONSTS
 
 def initial_node(line, cur_node):
     new_node = {
@@ -58,7 +59,7 @@ def get_graph(program):
                 raise RuntimeError("Bad formatting")
         
         if indent == indentation[-1]:
-            if "->" in line and "(" not in line.split("->")[0]:
+            if CONSTS['assert_check'](line):
                 cur_node['asserts'].append(line.strip())
             else:
                 new_node = initial_node(line, cur_node['parent'])
@@ -84,7 +85,7 @@ def strongly_connected_components(defined_fns):
                 for child in fn.children:
                     initial_len = len(reachable[fn_name])
                     reachable[fn_name].add(child.name)
-                    if not child.asserts:
+                    if not child.asserts and not CONSTS['implicit_assert']:
                         initial_len_2 = len(reachable[child.name])
                         reachable[child.name].add(fn_name)
                         if len(reachable[child.name]) > initial_len_2:
@@ -117,3 +118,15 @@ def strongly_connected_components(defined_fns):
                 scc_1_edges += [scc_2_idx]
         scc_edges.append(scc_1_edges)
     return sccs, scc_edges
+
+def get_root(defined_fns):
+    # Identify a function which is the parent of all other functions
+    # We allow for cycles, so we can't use just parents
+    shared_ancestors = None
+    for fn in defined_fns.values():
+        if shared_ancestors is None:
+            shared_ancestors = set(fn.get_ancestors()) | {fn.name}
+        else:
+            shared_ancestors.intersection_update(fn.get_ancestors())
+    shared_defined = shared_ancestors & set(defined_fns.keys())
+    return shared_defined.pop()

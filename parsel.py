@@ -1,6 +1,6 @@
 import argparse
 from codex import CodeGen
-from graph import get_graph, strongly_connected_components
+from graph import get_graph, strongly_connected_components, get_root
 import itertools
 from fn import get_function_from_examples
 import concurrent.futures
@@ -25,7 +25,7 @@ def fill_in_missing_fn(missing_fn_name, scc, defined_fns, implementation_set, im
         try:
             impl_str = missing_fn_attempt.get_implementation_strs()[0]
             new_implementation_attempt = impl_str + "\n" + implementation_attempt
-            exec(new_implementation_attempt, locals())
+            CONSTS['exec'](new_implementation_attempt)
             defined_fns[missing_fn_name] = missing_fn_attempt
             # Let all functions using the missing function know about their new child
             missing_fn_attempt.parent = []
@@ -53,7 +53,7 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
             print("--------")
             print(exec_implementation_attempt)
         try:
-            exec(exec_implementation_attempt, locals())
+            CONSTS['exec'](exec_implementation_attempt)
         except NameError as e:
             if catch_name_exceptions:
                 return implementation_attempt + asserts_str, implementation_set, e
@@ -137,10 +137,10 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=1):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=1, debug=False):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
-        scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout)
+        scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)
     if implementation_attempt is not None:
         return implementation_attempt
 
@@ -170,10 +170,10 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             fn = defined_fns[fn_name]
 
         return attempt_implementations(
-            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout)
+            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout, debug=debug)
     raise RuntimeError(f"No implementation found for {scc}")
 
-def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False):
+def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
     # Evaluate all the combinations of possible
     # implementations of the functions in the SCC
     all_implementations = {}
@@ -183,26 +183,35 @@ def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, 
         all_implementations[fn_name] = fn.get_implementation_strs()
         asserts_str += fn.get_assert_str()
     return attempt_implementations(
-        scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand)
+        scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug)
 
-def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False):
+def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
     if scc_idx in implemented_sccs:
         return
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
-        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand)
+        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
     for fn_name in sccs[scc_idx]:
         fn = defined_fns[fn_name]
         fn.implement(codegen)
-    dependencies_str += eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand)
+    dependencies_str += eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug)
     implemented_sccs.append(scc_idx)
     return dependencies_str
 
+def fns_to_str(fn, written):
+    if fn.name in written:
+        return ""
+    written.add(fn.name)
+    total_str = ""
+    for child in fn.children:
+        total_str += fns_to_str(child, written)
+    return total_str + CONSTS['full_fn_str'].format(
+        desc=fn.desc, fn_impl=fn.fixed_implementation)
+
 def write_to_file(filename, defined_fns):
     fn_defs = ""
-    for fn in defined_fns.values():
-        fn_defs += CONSTS['full_fn_str'].format(
-            desc=fn.desc, fn_impl=fn.fixed_implementation)
+    root = get_root(defined_fns)
+    fn_defs = fns_to_str(defined_fns[root], set())
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
     assert CONSTS['exist_asserts'](asserts)
     contents = f"{fn_defs}\n{asserts}"
@@ -211,22 +220,30 @@ def write_to_file(filename, defined_fns):
         f.write(contents)
     print("Done writing to " + str(filename))
 
-def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False):
+def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
     sccs, scc_edges = strongly_connected_components(defined_fns)
     implemented_sccs = []
     for scc_idx, _ in enumerate(sccs):
-        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand)
+        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
     return defined_fns
 
-def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False):
+def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
         target_file = source_file.split(".")[0] + CONSTS['extension']
     # Load the program to be parsed
     with open(source_file, "r") as f:
         program = f.readlines()
+    if "#*#*#\n" in program:
+        header = program[:program.index("#*#*#\n")]
+        program = program[program.index("#*#*#\n") + 1:]
+    else:
+        header = []
     _, defined_fns = get_graph(program)
-    defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand)
+    for fn in defined_fns.values():
+        fn.prefix = "\n".join(header)
+
+    defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand, debug)
     write_to_file(target_file, defined_fns)
 
 if __name__ == "__main__":
@@ -234,13 +251,14 @@ if __name__ == "__main__":
     argparser.add_argument("source_file", help="The program to parse")
     argparser.add_argument("-v", "--verbose", help="increase output verbosity", action="store_true")
     argparser.add_argument("-c", "--cache", help="Where to store the cache", default="cache.json")
-    argparser.add_argument("-d", "--key", help="Codex API key file", default="keys/codex_key.txt")
+    argparser.add_argument("-k", "--key", help="Codex API key file", default="keys/codex_key.txt")
     argparser.add_argument("-i", "--allow_imports", help="Allow imports", action="store_true")
     argparser.add_argument("-a", "--allow_autofill", help="Allow autofill", action="store_true")
     argparser.add_argument("-e", "--allow_expand", help="Allow autofill", action="store_true")
+    argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
     codegen = CodeGen(args.cache, args.key)
 
-    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand)
+    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=args.debug)

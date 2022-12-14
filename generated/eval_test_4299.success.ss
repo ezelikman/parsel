@@ -1,0 +1,2 @@
+count_pencils(n): count_pencils takes an integer and returns the pronunciation of "本" in the phrase "N 本".
+  count_pencils_helper(n): count_pencils_helper takes an integer and returns the pronunciation of "本" in the phrase "N 本".

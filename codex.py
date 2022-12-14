@@ -21,7 +21,7 @@ class CodeGen():
     def generate(self,
         codex_in, num_completions=8, max_tokens=500, temperature=0.5, presence_penalty=0.0,
         stop=["\ndef"], indented=True, indented_after_first_line=False, require=None, cache_key=None,
-        rate_limit_tokens=4000, verbose=False
+        rate_limit_tokens=4000, verbose=False, logit_bias=None
     ):
         if verbose:
             print(codex_in)
@@ -50,15 +50,27 @@ class CodeGen():
             while True:
                 try:
                     time.sleep(31)
-                    completions = openai.Completion.create(
-                        model="code-davinci-002",
-                        prompt=codex_in,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        presence_penalty=presence_penalty,
-                        stop=stop,
-                        n=num_completions,
-                    )['choices']
+                    if logit_bias is None:
+                        completions = openai.Completion.create(
+                            model="code-davinci-002",
+                            prompt=codex_in,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            presence_penalty=presence_penalty,
+                            stop=stop,
+                            n=num_completions,
+                        )['choices']
+                    else:
+                        completions = openai.Completion.create(
+                            model="code-davinci-002",
+                            prompt=codex_in,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            presence_penalty=presence_penalty,
+                            stop=stop,
+                            n=num_completions,
+                            logit_bias=logit_bias
+                        )['choices']
                     break
                 except openai.error.RateLimitError:
                     print("Rate limit reached. Waiting before retrying...")
