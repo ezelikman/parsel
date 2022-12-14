@@ -43,11 +43,16 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
     implementation_attempt = dependencies_str
     for fn_implementation in implementation_set:
         implementation_attempt += fn_implementation + "\n"
+    
+    if any([t in implementation_attempt for t in ["TODO",  "pass", "NotImplementedError", "[]"]]):
+        return None
+    if any([len(fn_implementation) > 1000 for fn_implementation in implementation_set]):
+        return None
     for assert_str in asserts_str.splitlines():
         exec_implementation_attempt = implementation_attempt
-        if verbose:
-            assert_in = CONSTS["get_assert_in"](assert_str)
-            exec_implementation_attempt += CONSTS["output_fn"].format(output_str=assert_in)
+        # if verbose:
+        #     assert_in = CONSTS["get_assert_in"](assert_str)
+        #     exec_implementation_attempt += CONSTS["output_fn"].format(output_str=assert_in)
         exec_implementation_attempt += assert_str
         if verbose:
             print("--------")
@@ -77,12 +82,40 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         num_workers = 1
         verbose = True
     else:
+        num_workers = 4
         verbose = False
+    num_workers = 1
+    verbose = True
     random.seed(42)
+    implementation_set_keys =  all_implementations.keys()
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     implementation_sets = list(itertools.product(*all_implementation_sets))
     n_to_try = min(max_attempts, len(implementation_sets))
     with tqdm(total=n_to_try) as pbar:
+    #     random.shuffle(implementation_sets)
+    #     for implementation_set in implementation_sets[:n_to_try]:
+            
+    #         try:
+    #             result = implement_set(implementation_set, dependencies_str, asserts_str, verbose)
+    #             if result is not None:
+    #                 implementation_attempt, implementation_set, _ = result
+        
+    #                 pbar.close()
+    #                 print("Successfully implemented", scc)
+    #                 for fn_name, implementation in zip(scc, implementation_set):
+    #                     fn = defined_fns[fn_name]
+    #                     if fn.fixed_implementation is None:
+    #                         fn.fix_implementation(implementation)
+    #                 return implementation_attempt
+    #             else:
+    #                 pbar.update(1)
+    #         except KeyboardInterrupt:
+    #             raise KeyboardInterrupt
+    #         except:
+    #             pbar.update(1)
+    #             continue
+            
+    #     print(f"Failed implementing {scc}")
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = []
             submitted = 0
@@ -102,7 +135,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                                 executor.shutdown(wait=False, cancel_futures=True)
                                 pbar.close()
                                 print("Successfully implemented", scc)
-                                for fn_name, implementation in zip(scc, implementation_set):
+                                for fn_name, implementation in zip(implementation_set_keys, implementation_set):
                                     fn = defined_fns[fn_name]
                                     if fn.fixed_implementation is None:
                                         fn.fix_implementation(implementation)
@@ -137,12 +170,19 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
+force_expand_counter = 0
+max_expand_counter = 2
 def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=1):
-    print("Attempting to implement", scc)
-    implementation_attempt = multiprocess_fill(
-        scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout)
-    if implementation_attempt is not None:
-        return implementation_attempt
+    global force_expand_counter, max_expand_counter
+    print("Attempting to implement", scc)        
+    if force_expand_counter == 0:
+        implementation_attempt = multiprocess_fill(
+            scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout)
+        if implementation_attempt is not None:
+            return implementation_attempt
+    else:
+        force_expand_counter -= 1
+
 
     if should_fill_in_missing:
         implementation_attempt = autofill(
@@ -151,7 +191,8 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             print("Successfully implemented", scc, "with autofill")
             return implementation_attempt
     
-    if should_expand:
+    if should_expand and max_expand_counter > 0:
+        max_expand_counter -= 1
         print("Attempting to expand", scc)
         new_scc = set()
         # Copy the old implementations
@@ -160,17 +201,17 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             fn = defined_fns[fn_name]
             if fn.fixed_implementation is None:
                 new_fn_defs = fn.expand(codegen)
+                if new_fn_defs is None:
+                    continue
                 for new_fn_name, new_fn in new_fn_defs.items():
                     new_fn.implement(codegen)
                     new_implementations[new_fn_name] = new_fn.get_implementation_strs()
-            defined_fns.update(new_fn_defs)
-            new_scc.update(new_fn_defs.keys())
+                defined_fns.update(new_fn_defs)
+                new_scc.update(new_fn_defs.keys())
         print("Expanded", scc, "to", new_scc)
-        for fn_name in scc:
-            fn = defined_fns[fn_name]
 
         return attempt_implementations(
-            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout)
+            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=True, remaining_attempts=remaining_attempts, timeout=timeout)
     raise RuntimeError(f"No implementation found for {scc}")
 
 def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False):
@@ -204,7 +245,7 @@ def write_to_file(filename, defined_fns):
         fn_defs += CONSTS['full_fn_str'].format(
             desc=fn.desc, fn_impl=fn.fixed_implementation)
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
-    assert CONSTS['exist_asserts'](asserts)
+    # assert CONSTS['exist_asserts'](asserts)
     contents = f"{fn_defs}\n{asserts}"
     with open(filename, "w") as f:
         print("Writing to " + str(filename))

@@ -14,7 +14,7 @@ CONSTS = {
                         "# Author:\n"
                         "# Sounds good, here's my one-sentence explanation of {name}:\n"
                         "# {name}",
-    "decompose_helper": "# Let's decompose this function into two functions:\n"
+    "decompose_helper": "# Let's decompose this function into at most three functions:\n"
                         "# Function to decompose:\n"
                         "# - {parsel_str}\n"
                         "# Necessary helper functions in the same format of 'fn_name(inputs): description':\n",

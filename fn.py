@@ -2,6 +2,8 @@ from consts import CONSTS
 
 class Function:
     def __init__(self, name, args, ret, desc, parent, asserts, prefix=''):
+        prefix = "\"\"\"An action plan is a list of strings that describes a sequence of steps to accomplish a task, To be correctly parsed, an action plan must be syntactically correct and contain only allowed actions and recognizable simple objects. Allowed actions: 'close' <arg1>, 'cut' <arg1>, 'drink' <arg1>, 'drop' <arg1>, 'eat' <arg1>, 'find' <arg1>, 'grab' <arg1>, 'greet' <arg1>, 'lie on' <arg1>, 'look at' <arg1>, 'move' <arg1>, 'open' <arg1>, 'plug in' <arg1>, 'plug out' <arg1>, 'point at' <arg1>, 'pour' <arg1> 'into' <arg2>, 'pull' <arg1>, 'push' <arg1>, 'put' <arg1> 'on' <arg2>, 'put' <arg1> 'in' <arg2>, 'put back' <arg1>, 'take off' <arg1>, 'put on' <arg1>, 'read' <arg1>, 'release', 'rinse' <arg1>, 'run to'  <arg1>, 'scrub' <arg1>, 'sit on' <arg1>, 'sleep', 'squeeze' <arg1>, 'stand up', 'switch off' <arg1>, 'switch on' <arg1>, 'touch' <arg1>, 'turn to' <arg1>, 'type on' <arg1>, 'wake up', 'walk to' <arg1>, 'wash' <arg1>, 'watch' <arg1>, 'wipe' <arg1>. To satisfy the common-sense constraints, each action step in this action plan must not violate the set of its pre-conditions (e.g. the agent cannot grab milk from the fridge before opening it) and post-conditions (e.g. the state of the fridge changes from \“closed\” to \“open\” after the agent opens it).\"\"\"\n\n"
+        # prefix = "\"\"\"An action plan is a list of strings that describes a sequence of steps to accomplish a task, To be correctly parsed, an action plan must be syntactically correct and contain only allowed actions and recognizable simple objects. Allowed actions: '[CLOSE]' <arg1>, '[CUT]'  <arg1>, '[DRINK]'  <arg1>, '[DROP]'  <arg1>, '[EAT]'  <arg1>, '[FIND]'  <arg1>, '[GRAB]'  <arg1>, '[GREET]'  <arg1>, '[LIE]',  <arg1> '[LOOKAT]'  <arg1>, '[MOVE]'  <arg1>, '[OPEN]'  <arg1>, '[PLUGIN]'  <arg1>, '[PLUGOUT]'  <arg1>, '[POINTAT]'  <arg1>, '[POUR]'  <arg1>, '[PULL]' <arg1>, '[PUSH]' <arg1>, '[PUTBACK]'  <arg1>  <arg1>, '[PUTIN]' <arg1>  <arg1>, '[PUTOBJBACK]'  <arg1>, '[PUTOFF]'  <arg1>, '[PUTON]'  <arg1>, '[READ]'  <arg1>, '[RELEASE]', '[RINSE]'  <arg1>, '[RUN]'  <arg1>, '[SCRUB]', '[SIT]' <arg1>, '[SLEEP]', '[SQUEEZE]' <arg1>, '[STANDUP]', '[SWITCHOFF]' <arg1>, '[SWITCHON]' <arg1>, '[TOUCH]' <arg1>, '[TURNTO]' <arg1>, '[TYPE]' <arg1>, '[WAKEUP]', '[WALK]', '[WASH]' <arg1>, '[WATCH]' <arg1>, '[WIPE]'. To satisfy the common-sense constraints, each action step in this action plan must not violate the set of its pre-conditions (e.g. the agent cannot grab milk from the fridge before opening it) and post-conditions (e.g. the state of the fridge changes from \“closed\” to \“open\” after the agent opens it).\"\"\"\n\n"
         self.name = name
         self.args = args
         self.ret = ret
@@ -51,6 +53,8 @@ class Function:
             assert_out = assert_out.strip()
             assert_str += CONSTS["assert_format"].format(
                 name=self.name, assert_in=assert_in, assert_out=assert_out)
+        if len(self.args) == 0: 
+            assert_str += f"from execute_virtual_home import test_script;test_script({self.name}())\n"
         return assert_str
     
     def get_implementation_strs(self):
@@ -59,6 +63,7 @@ class Function:
         return [f"{self.header()}:\n{join_str(impl)}" for impl in self.implementations]
 
     def implement(self, codex):
+        # print(self.get_codex_input())
         self.implementations = codex.generate(
             codex_in=self.get_codex_input(),
             # num_completions=8,
@@ -117,13 +122,16 @@ class Function:
             return
         body_str = CONSTS["decompose_helper"].format(
             parsel_str=self.to_parsel_str(include_asserts=False).rstrip())
-        gen_fns = codex.generate(body_str, num_completions=1, temperature=0., indented=False, max_tokens=250, stop=["\n#\n"])[0]
-        gen_fns = [gen_fn.split(
-            CONSTS["decompose_example_prefix"], 1)[-1] for gen_fn in gen_fns]
-        defined_fns = {self.name: self}
-        for gen_fn in gen_fns:
-            parse_to_fn(gen_fn, self, defined_fns)
-        return defined_fns
+        completions = codex.generate(body_str, num_completions=3, temperature=0.01, indented=False, max_tokens=250, stop=["\n#\n"])
+        for gen_fns in completions:
+            gen_fns = [gen_fn.split(
+                CONSTS["decompose_example_prefix"], 1)[-1] for gen_fn in gen_fns]
+            if len(gen_fns) > 3:
+                continue
+            defined_fns = {self.name: self}
+            for gen_fn in gen_fns:
+                parse_to_fn(gen_fn, self, defined_fns)
+            return defined_fns
 
     def add_child(self, child):
         self.children.append(child)
@@ -343,4 +351,4 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
                 defined_fns[fn_name] = new_fn
             return new_fn
         else:
-            raise RuntimeError(f"Function {fn_name} not defined")
+            print(f"Function {fn_name} not defined; skipped")
