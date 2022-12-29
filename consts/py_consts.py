@@ -1,4 +1,5 @@
 CONSTS = {
+    "exec_pre": "",
     "needs_indent": True,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],

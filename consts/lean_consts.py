@@ -19,6 +19,7 @@ def lean_exec(code):
             os.remove(f.name)
 
 CONSTS = {
+    "exec_pre": "",
     "needs_indent": False,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],

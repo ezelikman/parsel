@@ -21,8 +21,10 @@ class CodeGen():
     def generate(self,
         codex_in, num_completions=8, max_tokens=500, temperature=0.5, presence_penalty=0.0,
         stop=["\ndef"], indented=True, indented_after_first_line=False, require=None, cache_key=None,
-        rate_limit_tokens=4000, verbose=False, logit_bias=None
+        rate_limit_tokens=4000, verbose=False, logit_bias=None, model_name=None
     ):
+        if model_name is None:
+            model_name = "code-davinci-002"
         if verbose:
             print(codex_in)
             print("-----")
@@ -31,15 +33,20 @@ class CodeGen():
         cache_key_list = (cache_key_base, max_tokens, temperature, stop, indented, indented_after_first_line, require)
         if presence_penalty != 0.0:
             cache_key_list = cache_key_list + (presence_penalty,)
+        if model_name != "code-davinci-002":
+            cache_key_list = cache_key_list + (model_name,)
         cache_key = str(cache_key_list)
         if cache_key in self.cache:
             if len(self.cache[cache_key]) < num_completions:
                 num_completions -= len(self.cache[cache_key])
                 results = self.cache[cache_key]
             else:
-                return self.cache[cache_key]
+                return self.cache[cache_key][:num_completions]
         else:
             results = []
+
+        if model_name != "code-davinci-002":
+            print("WARNING, using davinci text model")
 
         print("Calling Codex!")
         total_tokens = num_completions * max_tokens
@@ -49,10 +56,10 @@ class CodeGen():
             print(num_completions, "completions", max_tokens, "tokens each")
             while True:
                 try:
-                    time.sleep(31)
+                    time.sleep(15)
                     if logit_bias is None:
                         completions = openai.Completion.create(
-                            model="code-davinci-002",
+                            model=model_name,
                             prompt=codex_in,
                             max_tokens=max_tokens,
                             temperature=temperature,
@@ -62,7 +69,7 @@ class CodeGen():
                         )['choices']
                     else:
                         completions = openai.Completion.create(
-                            model="code-davinci-002",
+                            model=model_name,
                             prompt=codex_in,
                             max_tokens=max_tokens,
                             temperature=temperature,
@@ -74,6 +81,7 @@ class CodeGen():
                     break
                 except openai.error.RateLimitError:
                     print("Rate limit reached. Waiting before retrying...")
+                    time.sleep(16)
             for completion in completions:
                 result = []
                 for line_idx, line in enumerate(completion.text.split("\n")):

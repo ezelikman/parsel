@@ -68,12 +68,7 @@ class Function:
     def implement(self, codex):
         self.implementations = codex.generate(
             codex_in=self.get_codex_input(),
-            # num_completions=8,
-            # max_tokens=500,
-            # num_completions=32,
-            # max_tokens=250,
-            # temperature=0.5,
-            num_completions=16,
+            num_completions=CONSTS['num_completions'],
             max_tokens=500,
             temperature=0.6,
             stop=CONSTS["gen_stop"],
@@ -280,7 +275,7 @@ def get_function_from_examples(missing_fn_name, examples, parent, codex, include
         missing_fn_name=missing_fn_name)
     implementations = codex.generate(
         codex_in=generation_str,
-        num_completions=16,
+        num_completions=CONSTS['num_completions'],
         max_tokens=250,
         temperature=0.2,
         indented_after_first_line=True,
@@ -352,6 +347,10 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
     if fn_name in scope:
         if fn_args is not None:
             print(f"Warning: Function {fn_name} already defined")
+            new_fn = defined_fns[fn_name]
+            if parent is not None:
+                new_fn.parents.append(parent)
+                parent.children.append(new_fn)
             return defined_fns[fn_name]
             # raise RuntimeError(f"Function {fn_name} already defined")
         new_fn = defined_fns[fn_name]

@@ -6,7 +6,9 @@ from fn import get_function_from_examples
 import concurrent.futures
 from tqdm import tqdm
 import random
+import time
 from consts import CONSTS
+import subprocess
 
 # When a function is called but not defined, we can try to
 # infer its implementation from the other functions in the
@@ -43,6 +45,8 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
     implementation_attempt = dependencies_str
     for fn_implementation in implementation_set:
         implementation_attempt += fn_implementation + "\n"
+    asserts_passed = 0
+    failure = None
     for assert_str in asserts_str.splitlines():
         exec_implementation_attempt = implementation_attempt
         if verbose:
@@ -51,29 +55,30 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
         exec_implementation_attempt += assert_str
         if verbose:
             print("--------")
+            print(CONSTS["exec_pre"])
             print(exec_implementation_attempt)
         try:
             CONSTS['exec'](exec_implementation_attempt)
-        except NameError as e:
-            if catch_name_exceptions:
-                return implementation_attempt + asserts_str, implementation_set, e
-            else:
-                raise e
         except Exception as e:
-            if catch_name_exceptions:
-                return None, implementation_set, e
-            else:
-                raise e
+            if failure is None:
+                failure = e
+            continue
+        asserts_passed += 1
+    if failure is not None:
+        if isinstance(failure, NameError):
+            return implementation_attempt + asserts_str, implementation_set, failure, asserts_passed
+        else:
+            return None, implementation_set, failure, asserts_passed
     implementation_attempt += asserts_str
-    return implementation_attempt, implementation_set, None
+    return implementation_attempt, implementation_set, None, asserts_passed
 
 def kill_remaining_futures(futures):
     for future in futures:
         if not future.done():
             future.result(timeout=0)
 
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=32, max_attempts=1000, debug=False):
-    if debug:
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=32, min_attempts=1000, max_attempts=10000, max_time=30, debug=False):
+    if debug and debug != "best":
         num_workers = 1
         verbose = True
     else:
@@ -82,26 +87,35 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     implementation_sets = list(itertools.product(*all_implementation_sets))
     n_to_try = min(max_attempts, len(implementation_sets))
+    best_attempt = (0, None)
+    start_time = time.time()
     with tqdm(total=n_to_try) as pbar:
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = []
             submitted = 0
             random.shuffle(implementation_sets)
             for implementation_set in implementation_sets[:n_to_try]:
-                futures.append(executor.submit(
-                    implement_set, implementation_set, dependencies_str, asserts_str, verbose))
-                submitted += 1
+                if not (time.time() - start_time > max_time and submitted > min_attempts):
+                    futures.append(executor.submit(
+                        implement_set, implementation_set, dependencies_str, asserts_str, verbose))
+                    submitted += 1
                 if submitted % num_workers == 0 or submitted == n_to_try:
                     for future in futures:
-                        if debug:
+                        if debug and debug != "best":
                             breakpoint()
                         try:
                             result = future.result(timeout=timeout)
                             if result is not None:
-                                implementation_attempt, implementation_set, _ = result
+                                implementation_attempt, implementation_set, error, asserts_passed = result
+                                if error is not None:
+                                    if asserts_passed > best_attempt[0]:
+                                        best_attempt = (asserts_passed, implementation_set)
+                                    raise error
                                 executor.shutdown(wait=False, cancel_futures=True)
                                 pbar.close()
                                 print("Successfully implemented", scc)
+                                with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
+                                    f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
                                 for fn_name, implementation in zip(scc, implementation_set):
                                     fn = defined_fns[fn_name]
                                     if fn.fixed_implementation is None:
@@ -116,8 +130,43 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                             pbar.update(1)
                             continue
                     futures = []
+            if debug:
+                print(best_attempt[0])
+                print("\n".join(best_attempt[1]))
+                breakpoint()
+            reattempt = executor.submit(implement_set, best_attempt[1], dependencies_str, asserts_str, verbose)
+            try:
+                print("Reattempting", scc)
+                result = reattempt.result(timeout=5)
+                if result is not None:
+                    implementation_attempt, implementation_set, error, asserts_passed = result
+                    print("Reattempted", scc)
+                    print("Original attempt:", best_attempt[0])
+                    print("Asserts passed:", asserts_passed)
+                    if error is not None:
+                        if asserts_passed > best_attempt[0]:
+                            best_attempt = (asserts_passed, implementation_set)
+                        raise error
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    pbar.close()
+                    print("Successfully implemented", scc)
+                    with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
+                        f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
+                    for fn_name, implementation in zip(scc, implementation_set):
+                        fn = defined_fns[fn_name]
+                        if fn.fixed_implementation is None:
+                            fn.fix_implementation(implementation)
+                    return implementation_attempt
+            except Exception as e:
+                print("Reattempt error:", e)
             executor.shutdown(wait=False, cancel_futures=True)
-            print(f"Failed implementing {scc}")
+            print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
+            # open "performance.csv" and write the score in the current line
+            with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
+                f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
+            subprocess.run(["pkill", "-f", "python"])
+            subprocess.run(["pkill", "-f", "Python"])
+            os.system("pkill -f multiprocessing.spawn")
 
 def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, remaining_attempts=10):
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
@@ -125,7 +174,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
     random.shuffle(implementation_sets)
     for implementation_set in implementation_sets:
         if remaining_attempts > 0:
-            implementation_attempt, implementation_set, e = implement_set(
+            implementation_attempt, implementation_set, e, _ = implement_set(
                 implementation_set, dependencies_str, asserts_str, catch_name_exceptions=True)
             if implementation_attempt is None:
                 continue
@@ -137,7 +186,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=1, debug=False):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)
@@ -214,7 +263,8 @@ def write_to_file(filename, defined_fns):
     fn_defs = fns_to_str(defined_fns[root], set())
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
     assert CONSTS['exist_asserts'](asserts)
-    contents = f"{fn_defs}\n{asserts}"
+    exec_pre = CONSTS['exec_pre']
+    contents = f"{exec_pre}{fn_defs}\n{asserts}"
     with open(filename, "w") as f:
         print("Writing to " + str(filename))
         f.write(contents)
