@@ -9,6 +9,7 @@ import random
 import time
 from consts import CONSTS
 import subprocess
+import os
 
 # When a function is called but not defined, we can try to
 # infer its implementation from the other functions in the
@@ -41,11 +42,12 @@ def fill_in_missing_fn(missing_fn_name, scc, defined_fns, implementation_set, im
         except:
             continue
 
-def implement_set(implementation_set, dependencies_str, asserts_str, verbose=True, catch_name_exceptions=False):
+# Try to fill in the implementation of a set of functions in an SCC
+def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, catch_name_exceptions=False):
     implementation_attempt = dependencies_str
     for fn_implementation in implementation_set:
         implementation_attempt += fn_implementation + "\n"
-    asserts_passed = 0
+    asserts_passed = []
     failure = None
     for assert_str in asserts_str.splitlines():
         exec_implementation_attempt = implementation_attempt
@@ -63,7 +65,7 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
             if failure is None:
                 failure = e
             continue
-        asserts_passed += 1
+        asserts_passed += [assert_str]
     if failure is not None:
         if isinstance(failure, NameError):
             return implementation_attempt + asserts_str, implementation_set, failure, asserts_passed
@@ -72,12 +74,14 @@ def implement_set(implementation_set, dependencies_str, asserts_str, verbose=Tru
     implementation_attempt += asserts_str
     return implementation_attempt, implementation_set, None, asserts_passed
 
+# Kill any futures that haven't finished yet
 def kill_remaining_futures(futures):
     for future in futures:
         if not future.done():
             future.result(timeout=0)
 
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=32, min_attempts=1000, max_attempts=10000, max_time=30, debug=False):
+# Use multiprocessing to try to fill in the implementation of an SCC
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=4, min_attempts=500, max_attempts=100000, min_time=60, max_time=120, debug=False):
     if debug and debug != "best":
         num_workers = 1
         verbose = True
@@ -93,11 +97,12 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             futures = []
             submitted = 0
-            random.shuffle(implementation_sets)
+            if CONSTS['eval_mode']:
+                random.shuffle(implementation_sets)
             for implementation_set in implementation_sets[:n_to_try]:
-                if not (time.time() - start_time > max_time and submitted > min_attempts):
+                if (not (time.time() - start_time > min_time and submitted > min_attempts)) and ((time.time() - start_time) < max_time):
                     futures.append(executor.submit(
-                        implement_set, implementation_set, dependencies_str, asserts_str, verbose))
+                        eval_implementation, implementation_set, dependencies_str, asserts_str, verbose))
                     submitted += 1
                 if submitted % num_workers == 0 or submitted == n_to_try:
                     for future in futures:
@@ -108,14 +113,15 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                             if result is not None:
                                 implementation_attempt, implementation_set, error, asserts_passed = result
                                 if error is not None:
-                                    if asserts_passed > best_attempt[0]:
-                                        best_attempt = (asserts_passed, implementation_set)
+                                    if len(asserts_passed) > best_attempt[0]:
+                                        best_attempt = (len(asserts_passed), implementation_set)
                                     raise error
                                 executor.shutdown(wait=False, cancel_futures=True)
                                 pbar.close()
                                 print("Successfully implemented", scc)
-                                with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
-                                    f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
+                                if CONSTS['eval_mode']:
+                                    with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                                        f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
                                 for fn_name, implementation in zip(scc, implementation_set):
                                     fn = defined_fns[fn_name]
                                     if fn.fixed_implementation is None:
@@ -131,10 +137,19 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                             continue
                     futures = []
             if debug:
+                print(CONSTS['exec_pre'])
                 print(best_attempt[0])
-                print("\n".join(best_attempt[1]))
+                print(dependencies_str)
+                if best_attempt[1] is not None:
+                    print("\n".join(best_attempt[1]))
+                else:
+                    # Print the most recent attempt
+                    print("\n".join(implementation_set))
+                    pass
+                print(asserts_str)
                 breakpoint()
-            reattempt = executor.submit(implement_set, best_attempt[1], dependencies_str, asserts_str, verbose)
+            reattempt = executor.submit(
+                eval_implementation, best_attempt[1], dependencies_str, asserts_str, verbose)
             try:
                 print("Reattempting", scc)
                 result = reattempt.result(timeout=5)
@@ -142,16 +157,19 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                     implementation_attempt, implementation_set, error, asserts_passed = result
                     print("Reattempted", scc)
                     print("Original attempt:", best_attempt[0])
-                    print("Asserts passed:", asserts_passed)
+                    print("Asserts passed:", len(asserts_passed))
+                    for assert_passed in asserts_passed:
+                        print("    ", assert_passed)
                     if error is not None:
-                        if asserts_passed > best_attempt[0]:
-                            best_attempt = (asserts_passed, implementation_set)
+                        if len(asserts_passed) > best_attempt[0]:
+                            best_attempt = (len(asserts_passed), implementation_set)
                         raise error
                     executor.shutdown(wait=False, cancel_futures=True)
                     pbar.close()
                     print("Successfully implemented", scc)
-                    with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
-                        f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
+                    if CONSTS['eval_mode']:
+                        with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                            f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
                     for fn_name, implementation in zip(scc, implementation_set):
                         fn = defined_fns[fn_name]
                         if fn.fixed_implementation is None:
@@ -160,13 +178,14 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
             except Exception as e:
                 print("Reattempt error:", e)
             executor.shutdown(wait=False, cancel_futures=True)
+            os.system("pkill -f multiprocessing.spawn")
             print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
             # open "performance.csv" and write the score in the current line
-            with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
-                f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
-            subprocess.run(["pkill", "-f", "python"])
-            subprocess.run(["pkill", "-f", "Python"])
-            os.system("pkill -f multiprocessing.spawn")
+            if CONSTS['eval_mode']:
+                with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                    f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
+                # subprocess.run(["pkill", "-f", "python"])
+                # subprocess.run(["pkill", "-f", "Python"])
 
 def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, remaining_attempts=10):
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
@@ -174,7 +193,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
     random.shuffle(implementation_sets)
     for implementation_set in implementation_sets:
         if remaining_attempts > 0:
-            implementation_attempt, implementation_set, e, _ = implement_set(
+            implementation_attempt, implementation_set, e, _ = eval_implementation(
                 implementation_set, dependencies_str, asserts_str, catch_name_exceptions=True)
             if implementation_attempt is None:
                 continue
@@ -186,7 +205,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.5, debug=False):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)
@@ -234,17 +253,19 @@ def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, 
     return attempt_implementations(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug)
 
-def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
+def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
+    print("Implementing SCC", scc_idx, sccs[scc_idx])
     if scc_idx in implemented_sccs:
-        return
+        return implemented_sccs[scc_idx]
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
         dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
     for fn_name in sccs[scc_idx]:
         fn = defined_fns[fn_name]
         fn.implement(codegen)
-    dependencies_str += eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug)
-    implemented_sccs.append(scc_idx)
+    if not sample_only:
+        dependencies_str += eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug)
+    implemented_sccs[scc_idx] = dependencies_str
     return dependencies_str
 
 def fns_to_str(fn, written):
@@ -270,11 +291,11 @@ def write_to_file(filename, defined_fns):
         f.write(contents)
     print("Done writing to " + str(filename))
 
-def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
+def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
     sccs, scc_edges = strongly_connected_components(defined_fns)
-    implemented_sccs = []
+    implemented_sccs = {}
     for scc_idx, _ in enumerate(sccs):
-        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
     return defined_fns
 
 def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False):
@@ -306,9 +327,15 @@ if __name__ == "__main__":
     argparser.add_argument("-a", "--allow_autofill", help="Allow autofill", action="store_true")
     argparser.add_argument("-e", "--allow_expand", help="Allow autofill", action="store_true")
     argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
+    argparser.add_argument("-b", "--best", help="Best", action="store_true")
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
     codegen = CodeGen(args.cache, args.key)
-
-    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=args.debug)
+    from consts import mode
+    assert mode != "apps"
+    if args.best:
+        debug = 'best'
+    else:
+        debug = args.debug
+    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug)

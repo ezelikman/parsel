@@ -77,7 +77,7 @@ class Function:
             require=None,
             cache_key=None,
         )
-        self.implementations = filter(CONSTS["impl_filter"], self.implementations)
+        self.implementations = list(filter(CONSTS["impl_filter"], self.implementations))[:CONSTS['num_completions_eval']]
     
     def names_to_fns(self, defined_fns):
         for i, child_name in enumerate(self.children):
@@ -310,12 +310,28 @@ def get_function_from_examples(missing_fn_name, examples, parent, codex, include
 def find_colon(line):
     # Find the first : not in parentheses
     paren_count = 0
+    bracket_count = 0
+    curly_count = 0
+    in_string = None
     for i, c in enumerate(line):
         if c == "(":
             paren_count += 1
         elif c == ")":
             paren_count -= 1
-        elif c == ":" and paren_count == 0:
+        elif c == "[":
+            bracket_count += 1
+        elif c == "]":
+            bracket_count -= 1
+        elif c == "{":
+            curly_count += 1
+        elif c == "}":
+            curly_count -= 1
+        elif c == "\"" or c == "'":
+            if in_string == c:
+                in_string = None
+            else:
+                in_string = c
+        elif c == ":" and paren_count == 0 and bracket_count == 0 and curly_count == 0 and in_string is None:
             return i
     return -1
 
@@ -326,6 +342,8 @@ def parse_line(line):
         return line, None, None, None
     fn_sig, desc = line[:colon_idx], line[colon_idx + 1:]
     desc = desc.strip()
+    if len(fn_sig.split("(", 1)) == 1:
+        raise ValueError(f"Invalid function signature: {fn_sig}")
     fn_name, fn_args = fn_sig.split("(", 1)
     if "->" in fn_args:
         fn_args, fn_ret = fn_args.split("->", 1)
@@ -349,15 +367,17 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
             print(f"Warning: Function {fn_name} already defined")
             new_fn = defined_fns[fn_name]
             if parent is not None:
-                new_fn.parents.append(parent)
-                parent.children.append(new_fn)
-            return defined_fns[fn_name]
+                if parent not in new_fn.parents:
+                    new_fn.parents.append(parent)
+                if new_fn not in parent.children:
+                    parent.children.append(new_fn)
+            return new_fn
             # raise RuntimeError(f"Function {fn_name} already defined")
         new_fn = defined_fns[fn_name]
         if parent is not None:
             new_fn.parents.append(parent)
             parent.children.append(new_fn)
-        return defined_fns[fn_name]
+        return new_fn
     else:
         if fn_args is not None:
             new_fn = Function(

@@ -79,17 +79,28 @@ def strongly_connected_components(defined_fns):
     changed = True
     while changed:
         changed = False
+        # Loop through all the pairs of fn_name and the functions reachable from it
         for fn_name, fns_reachable in reachable.items():
-            for fn_reachable in fns_reachable.copy():
-                fn = defined_fns[fn_reachable]
+            # Loop through all the functions reachable from fn_name
+            for fn_reachable_name in fns_reachable.copy():
+                fn = defined_fns[fn_reachable_name]
+                # Loop through all the children of the functions reachable from fn_name
                 for child in fn.children:
                     initial_len = len(reachable[fn_name])
+                    # Try to add the child to the set of functions reachable from fn_name
                     reachable[fn_name].add(child.name)
+                    # If the child has no asserts, it also depends on the parent
                     if not child.asserts and not CONSTS['implicit_assert']:
                         initial_len_2 = len(reachable[child.name])
-                        reachable[child.name].add(fn_name)
+                        reachable[child.name].add(fn_reachable_name)
                         if len(reachable[child.name]) > initial_len_2:
                             changed = True
+                    if len(reachable[fn_name]) > initial_len:
+                        changed = True
+                # Reachability is transitive, so add everything reachable from anything reachable from fn_name
+                for fn_reachable_name_2 in fns_reachable.copy():
+                    initial_len = len(reachable[fn_name])
+                    reachable[fn_name].update(reachable[fn_reachable_name_2])
                     if len(reachable[fn_name]) > initial_len:
                         changed = True
 
@@ -103,8 +114,9 @@ def strongly_connected_components(defined_fns):
         scc = {fn_name}
         for child_name in reachable[fn_name]:
             if fn_name in reachable[child_name]:
-                scc.add(child_name)
-                remaining_nodes -= {child_name}
+                if child_name in remaining_nodes:
+                    scc.add(child_name)
+                    remaining_nodes.remove(child_name)
         sccs.append(scc)
 
     # Identify the relationships between the strongly connected components

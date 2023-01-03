@@ -9,3 +9,6 @@ programs/*
 keys/*
 .DS_Store
 cache.json
+old/*
+generated/*
+!programs/lisp.ss

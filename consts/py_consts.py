@@ -1,6 +1,71 @@
+exec_imports = (
+    "import sys\nimport time\nimport itertools\nfrom itertools import accumulate, product, permutations, "
+    "combinations\nimport collections\nfrom collections import Counter, OrderedDict, deque, defaultdict, "
+    "ChainMap\nfrom functools import lru_cache\nimport math\nfrom math import sqrt, sin, cos, tan, ceil, "
+    "fabs, floor, gcd, exp, log, log2\nimport fractions\nfrom typing import List, Tuple\nimport numpy as "
+    "np\nimport random\nimport heapq\n"
+)
+
+def eval_fn(fn_str):
+    import io, contextlib
+    import sys
+    import time
+    import resource
+    import itertools
+    from itertools import accumulate, product, permutations, combinations
+    import collections
+    from collections import Counter, OrderedDict, deque, defaultdict, ChainMap
+    from functools import lru_cache
+    import math
+    from math import sqrt, sin, cos, tan, ceil, fabs, floor, gcd, exp, log, log2
+    import fractions
+    from typing import List, Tuple
+    import numpy as np
+    import random
+    import heapq
+    exec(exec_imports + fn_str, locals())
+
+def find_str(line, target):
+    # Find the first : not in parentheses
+    paren_count = 0
+    bracket_count = 0
+    curly_count = 0
+    in_string = None
+    for i, c in enumerate(line):
+        if c == "(":
+            paren_count += 1
+        elif c == ")":
+            paren_count -= 1
+        elif c == "[":
+            bracket_count += 1
+        elif c == "]":
+            bracket_count -= 1
+        elif c == "{":
+            curly_count += 1
+        elif c == "}":
+            curly_count -= 1
+        elif c == "\"" or c == "'":
+            if in_string == c:
+                in_string = None
+            else:
+                in_string = c
+        elif c == target and paren_count == 0 and bracket_count == 0 and curly_count == 0 and in_string is None:
+            return i
+    return -1
+
+def assert_check(line):
+    line = line.strip()
+    return find_str(line, ":") == -1 and "->" in line and (find_str(line, "-") == find_str(line, ">") - 1)
+
 CONSTS = {
+    "rate_limit_tokens_text": 16000,
+    "num_completions": 8,
+    "text_model_name": None,
+    "num_text_completions": 8,
+    "max_text_completions": 8,
     "exec_pre": "",
     "needs_indent": True,
+    "eval_mode": False,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],
     "fn_end": "return",
@@ -13,7 +78,7 @@ CONSTS = {
     "use_helper": "# Uses: {uses}\n",
     "impl_helper": "{header}:\n{impls}",
     "assert_helper": lambda _: "",
-    "assert_check": lambda line: "->" in line and "(" not in line.split("->")[0],
+    "assert_check": assert_check,
     "assert_break": lambda cur_assert: (cur_assert.split("->")[0].strip(), cur_assert.split("->")[1].strip()),
     "assert_format": "assert repr(str({name}({assert_in}))) == repr(str({assert_out}))\n",
     "explain_helper":  "# Reviewer:\n"
@@ -38,7 +103,7 @@ CONSTS = {
     "full_fn_str": "# {desc}\n{fn_impl}\n",
     "get_assert_in": lambda assert_str: assert_str.split('==')[0].replace('assert', '').strip(),
     "exist_asserts": lambda assert_str: 'assert' in assert_str,
-    "exec": lambda code: exec(code, locals()),
+    "exec": eval_fn,
     "impl_filter": lambda _: True,
     "implicit_assert": False,
 }

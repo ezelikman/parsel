@@ -19,6 +19,7 @@ def lean_exec(code):
             os.remove(f.name)
 
 CONSTS = {
+    "rate_limit_tokens_text": 16000,
     "exec_pre": "",
     "needs_indent": False,
     "fn_init": "def ",

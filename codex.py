@@ -92,9 +92,16 @@ class CodeGen():
                     result += [line]
                 results.append(result)
 
-            # Save updated cache
+            # Save updated cache - reopen in case multiple processes running
+            # Save to a temp file first, then rename
+            # Check if a temp file exists, and if so, wait for it to be deleted
+            while os.path.exists(self.cache_file + ".tmp"):
+                time.sleep(0.01)
+            with open(self.cache_file, "r") as f:
+                self.cache = json.load(f)
             self.cache[cache_key] = results
-            with open(self.cache_file, "w") as f:
+            with open(self.cache_file + ".tmp", "w") as f:
                 json.dump(self.cache, f, indent=4)
+            os.rename(self.cache_file + ".tmp", self.cache_file)
             total_tokens -= num_completions * max_tokens
         return results

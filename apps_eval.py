@@ -24,7 +24,21 @@ def prepend_hash(string):
   new_str = "# " + string.replace("\n", "\n# ")
   return new_str.replace("\n# \n", "\n#\n")
 
-def main(problem, debug=False):
+def consider_more_solutions(translated_solutions, translation_attempt_idx, question, parsel_solution):
+  # if translation_attempt_idx == len(translated_solutions) - 1:
+  #   print("Failed to translate. Trying more solutions...")
+  #   translated_solutions = codegen.generate(
+  #     codex_in=prefix_prefix + question + parsel_solution,
+  #     num_completions=2 * CONSTS['num_completions_eval'],
+  #     temperature=0.2,
+  #     presence_penalty=0.1,
+  #     indented=False,
+  #     stop="\"\"\"",
+  #     logit_bias={"4299": -100}
+  #   )
+  return translated_solutions
+
+def main(problem, debug=False, sample_only=False):
   modes = ['test']
   direct = False
   for mode in modes:
@@ -57,8 +71,16 @@ def main(problem, debug=False):
             continue
         print("PROBLEM: ", folder)
         # open performance.csv and write the problem number
-        with open(f"performance_{CONSTS['num_completions']}.csv", "a+") as f:
-          f.write("\n" + folder)
+        if not sample_only:
+          if os.path.exists(f"performance_{CONSTS['num_completions_eval']}.csv"):
+            # first check if the problem number is already at the start of some line in the file
+            with open(f"performance_{CONSTS['num_completions_eval']}.csv", "r") as f:
+              for line in f.readlines():
+                if line.startswith(folder): #and (len(line.split(",")) == CONSTS['max_text_completions'] + 1):
+                  exit()
+
+          with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+            f.write("\n" + folder)
 
         inputs = input_output['inputs']
         outputs = input_output['outputs']
@@ -86,6 +108,7 @@ def main(problem, debug=False):
               f.write("Confirmed")
         sketch_solutions = codegen.generate(
           model_name=CONSTS['text_model_name'],
+          rate_limit_tokens=CONSTS['rate_limit_tokens_text'],
           codex_in=prefix_prefix + question + cur_prompt,
           num_completions=CONSTS['num_text_completions'],
           temperature=0.6,
@@ -93,7 +116,10 @@ def main(problem, debug=False):
           stop="\"\"\"",
           logit_bias={"4299": -100}
         )
+        n_valid_translations = 0
         for sketch_solution in sketch_solutions:
+          if n_valid_translations >= CONSTS['max_text_completions']:
+            break
           if direct:
             parsel_solution = sketch_solution
             translated_solutions = [parsel_solution]
@@ -105,7 +131,7 @@ def main(problem, debug=False):
             )
             translated_solutions = codegen.generate(
               codex_in=prefix_prefix + question + parsel_solution,
-              num_completions=CONSTS['num_completions'],
+              num_completions=CONSTS['num_translation_attempts'],
               temperature=0.2,
               presence_penalty=0.1,
               indented=False,
@@ -113,12 +139,17 @@ def main(problem, debug=False):
               logit_bias={"4299": -100}
             )
           valid_translation = False
-          for attempt_solution in translated_solutions:
+          translation_attempt_idx = -1
+          while translation_attempt_idx < len(translated_solutions) - 1:
+            translation_attempt_idx += 1
+            attempt_solution = translated_solutions[translation_attempt_idx]
             if valid_translation:
               break
             if any(line.startswith("# ") for line in attempt_solution):
+              translated_solutions = consider_more_solutions(translated_solutions, translation_attempt_idx, question, parsel_solution)
               continue
             if len("".join(attempt_solution).strip()) == 0:
+              translated_solutions = consider_more_solutions(translated_solutions, translation_attempt_idx, question, parsel_solution)
               continue
             try:
               # Remove blank lines
@@ -130,17 +161,22 @@ def main(problem, debug=False):
                 else:
                   break
               attempt_solution = new_solution
-              print("\n".join(attempt_solution))
               root, defined_fns = get_graph(attempt_solution)
-              print(f"Implementing {len(defined_fns)} functions")
               if len(defined_fns) > 7:
+                translated_solutions = consider_more_solutions(translated_solutions, translation_attempt_idx, question, parsel_solution)
                 continue
               else:
+                print(f"Attempt number {translation_attempt_idx}")
+                print("\n".join(attempt_solution))
+                print(f"Implementing {len(defined_fns)} functions")
                 valid_translation = True
+                n_valid_translations += 1
               root.asserts = cur_asserts
               for fn in defined_fns.values():
                 fn.prefix = prefix_prefix + question + prefix_suffix
-              parsel_graph(defined_fns, codegen, debug=debug)
+              parsel_graph(defined_fns, codegen, debug=debug, sample_only=sample_only)
+              if sample_only:
+                continue
               success_save_path = save_file.replace(".ss", ".success.ss")
               if not os.path.exists(success_save_path):
                 with open(success_save_path, "w") as f:
@@ -171,13 +207,16 @@ if __name__ == '__main__':
   argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
   argparser.add_argument("-b", "--best", help="Best", action="store_true")
   argparser.add_argument("-p", "--problem", help="Problem number", default=2016, type=int)
+  argparser.add_argument("-s", "--sample_only", help="Sample only, do not evaluate", action="store_true")
 
   args = argparser.parse_args()
   debug = args.debug
+  from consts import mode
+  assert mode == "apps"
 
   codegen = CodeGen(args.cache, args.key)
   if args.debug:
     debug = "all"
   if args.best:
     debug = "best"
-  main(args.problem, debug=debug)
+  main(args.problem, debug=debug, sample_only=args.sample_only)
