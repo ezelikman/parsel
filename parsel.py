@@ -4,10 +4,12 @@ from graph import get_graph, strongly_connected_components, get_root
 import itertools
 from fn import get_function_from_examples
 import concurrent.futures
+from multiprocessing import get_context
 from tqdm import tqdm
 import random
 import time
 from consts import CONSTS
+import multiprocessing
 import subprocess
 import os
 
@@ -43,13 +45,19 @@ def fill_in_missing_fn(missing_fn_name, scc, defined_fns, implementation_set, im
             continue
 
 # Try to fill in the implementation of a set of functions in an SCC
-def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, catch_name_exceptions=False):
+def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, catch_name_exceptions=False, best_attempt=0):
     implementation_attempt = dependencies_str
     for fn_implementation in implementation_set:
         implementation_attempt += fn_implementation + "\n"
     asserts_passed = []
     failure = None
+    attempted = 0
     for assert_str in asserts_str.splitlines():
+        n_remaining = len(asserts_str.splitlines()) - attempted
+        n_remaining_to_best_beat = best_attempt - len(asserts_passed)
+        if len(asserts_str.splitlines()) - attempted < best_attempt:
+            failure = Exception("Already beat this attempt")
+            break
         exec_implementation_attempt = implementation_attempt
         if verbose:
             assert_in = CONSTS["get_assert_in"](assert_str)
@@ -66,6 +74,7 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
                 failure = e
             continue
         asserts_passed += [assert_str]
+        attempted += 1
     if failure is not None:
         if isinstance(failure, NameError):
             return implementation_attempt + asserts_str, implementation_set, failure, asserts_passed
@@ -81,7 +90,7 @@ def kill_remaining_futures(futures):
             future.result(timeout=0)
 
 # Use multiprocessing to try to fill in the implementation of an SCC
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=4, min_attempts=500, max_attempts=100000, min_time=60, max_time=120, debug=False):
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=30, min_attempts=500, max_attempts=100000, min_time=60, max_time=120, debug=False):
     if debug and debug != "best":
         num_workers = 1
         verbose = True
@@ -89,20 +98,23 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         verbose = False
     random.seed(42)
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
-    implementation_sets = list(itertools.product(*all_implementation_sets))
+    # We save memory by only storing the index of the implementation in all_implementation_sets
+    implementation_sets = list(itertools.product(*[list(range(len(impls))) for impls in all_implementation_sets]))
     n_to_try = min(max_attempts, len(implementation_sets))
     best_attempt = (0, None)
     start_time = time.time()
     with tqdm(total=n_to_try) as pbar:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=get_context('spawn')) as executor:
             futures = []
             submitted = 0
             if CONSTS['eval_mode']:
                 random.shuffle(implementation_sets)
-            for implementation_set in implementation_sets[:n_to_try]:
+            for implementation_set_indices in implementation_sets[:n_to_try]:
+                # We need to convert the implementation set indices to the actual implementation_set
+                implementation_set = [all_implementation_sets[i][impl_id] for i, impl_id in enumerate(implementation_set_indices)]
                 if (not (time.time() - start_time > min_time and submitted > min_attempts)) and ((time.time() - start_time) < max_time):
                     futures.append(executor.submit(
-                        eval_implementation, implementation_set, dependencies_str, asserts_str, verbose))
+                        eval_implementation, implementation_set, dependencies_str, asserts_str, verbose, best_attempt[0]))
                     submitted += 1
                 if submitted % num_workers == 0 or submitted == n_to_try:
                     for future in futures:
@@ -177,15 +189,20 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                     return implementation_attempt
             except Exception as e:
                 print("Reattempt error:", e)
-            executor.shutdown(wait=False, cancel_futures=True)
             os.system("pkill -f multiprocessing.spawn")
+            executor.shutdown(wait=False, cancel_futures=True)
+            while multiprocessing.active_children():
+                try:
+                    os.system(f"kill {multiprocessing.active_children()[0].pid}")
+                except:
+                    pass
             print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
             # open "performance.csv" and write the score in the current line
             if CONSTS['eval_mode']:
                 with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
                     f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
-                # subprocess.run(["pkill", "-f", "python"])
-                # subprocess.run(["pkill", "-f", "Python"])
+            for work_item in executor._pending_work_items.values():
+                work_item.future.cancel()
 
 def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, remaining_attempts=10):
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
@@ -205,7 +222,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.5, debug=False):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)
