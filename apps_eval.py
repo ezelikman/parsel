@@ -72,14 +72,14 @@ def main(problem, debug=False, sample_only=False):
         print("PROBLEM: ", folder)
         # open performance.csv and write the problem number
         if not sample_only:
-          if os.path.exists(f"performance_{CONSTS['num_completions_eval']}.csv"):
+          if os.path.exists(CONSTS['eval_filename']):
             # first check if the problem number is already at the start of some line in the file
-            with open(f"performance_{CONSTS['num_completions_eval']}.csv", "r") as f:
+            with open(CONSTS['eval_filename'], "r") as f:
               for line in f.readlines():
                 if line.startswith(folder): #and (len(line.split(",")) == CONSTS['max_text_completions'] + 1):
                   exit()
 
-          with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+          with open(CONSTS['eval_filename'], "a+") as f:
             f.write("\n" + folder)
 
         inputs = input_output['inputs']

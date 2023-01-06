@@ -55,7 +55,7 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     for assert_str in asserts_str.splitlines():
         n_remaining = len(asserts_str.splitlines()) - attempted
         n_remaining_to_best_beat = best_attempt - len(asserts_passed)
-        if len(asserts_str.splitlines()) - attempted < best_attempt:
+        if (len(asserts_str.splitlines()) - attempted < best_attempt) or (CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
             failure = Exception("Already beat this attempt")
             break
         exec_implementation_attempt = implementation_attempt
@@ -129,10 +129,11 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                                         best_attempt = (len(asserts_passed), implementation_set)
                                     raise error
                                 executor.shutdown(wait=False, cancel_futures=True)
+                                os.system("pkill -f multiprocessing.spawn")
                                 pbar.close()
                                 print("Successfully implemented", scc)
                                 if CONSTS['eval_mode']:
-                                    with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                                    with open(CONSTS['eval_filename'], "a+") as f:
                                         f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
                                 for fn_name, implementation in zip(scc, implementation_set):
                                     fn = defined_fns[fn_name]
@@ -180,7 +181,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                     pbar.close()
                     print("Successfully implemented", scc)
                     if CONSTS['eval_mode']:
-                        with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                        with open(CONSTS['eval_filename'], "a+") as f:
                             f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
                     for fn_name, implementation in zip(scc, implementation_set):
                         fn = defined_fns[fn_name]
@@ -193,13 +194,13 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
             executor.shutdown(wait=False, cancel_futures=True)
             while multiprocessing.active_children():
                 try:
-                    os.system(f"kill {multiprocessing.active_children()[0].pid}")
+                    os.system(f"kill -9 {multiprocessing.active_children()[0].pid}")
                 except:
                     pass
             print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
             # open "performance.csv" and write the score in the current line
             if CONSTS['eval_mode']:
-                with open(f"performance_{CONSTS['num_completions_eval']}.csv", "a+") as f:
+                with open(CONSTS['eval_filename'], "a+") as f:
                     f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
             for work_item in executor._pending_work_items.values():
                 work_item.future.cancel()
@@ -222,7 +223,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.02, debug=False):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)

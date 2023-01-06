@@ -12,6 +12,9 @@ exec_imports = (
 )
 
 exec_pre = exec_imports + """
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024 * 2, 1024 * 1024 * 1024 * 2))
+
 import io, contextlib
 
 def apps_preprocess(input_str):
@@ -108,11 +111,12 @@ def assert_check(line):
 
 CONSTS = {
     "rate_limit_tokens_text": 16000,
-    "num_completions": 16,
-    "num_completions_eval": 16,
+    "num_completions": 8,
+    "num_completions_eval": 8,
     "num_translation_attempts": 8,
     "text_model_name": "text-davinci-003",
     'eval_mode': True,
+    'strict_mode': False,
     # "text_model_name": None,
     "num_text_completions": 10,
     "max_text_completions": 8,
@@ -159,3 +163,5 @@ CONSTS = {
     "impl_filter": lambda _: True,
     "implicit_assert": False,
 }
+
+CONSTS['eval_filename'] = f"performance_{CONSTS['num_completions_eval']}" + ('strict' if CONSTS['strict_mode'] else "") + ".csv"
