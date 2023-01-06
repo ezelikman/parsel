@@ -90,13 +90,14 @@ def kill_remaining_futures(futures):
             future.result(timeout=0)
 
 # Use multiprocessing to try to fill in the implementation of an SCC
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=30, min_attempts=500, max_attempts=100000, min_time=60, max_time=120, debug=False):
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=30, min_attempts=500, max_attempts=100000, min_time=60, max_time=120, debug=False, seed=42):
     if debug and debug != "best":
         num_workers = 1
         verbose = True
     else:
         verbose = False
-    random.seed(42)
+    random.seed(seed)
+    print(seed)
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     # We save memory by only storing the index of the implementation in all_implementation_sets
     implementation_sets = list(itertools.product(*[list(range(len(impls))) for impls in all_implementation_sets]))
@@ -107,8 +108,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=get_context('spawn')) as executor:
             futures = []
             submitted = 0
-            if CONSTS['eval_mode']:
-                random.shuffle(implementation_sets)
+            random.shuffle(implementation_sets)
             for implementation_set_indices in implementation_sets[:n_to_try]:
                 # We need to convert the implementation set indices to the actual implementation_set
                 implementation_set = [all_implementation_sets[i][impl_id] for i, impl_id in enumerate(implementation_set_indices)]
@@ -223,10 +223,10 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.02, debug=False):
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False, seed=42):
     print("Attempting to implement", scc)
     implementation_attempt = multiprocess_fill(
-        scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug)
+        scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, debug=debug, seed=seed)
     if implementation_attempt is not None:
         return implementation_attempt
 
@@ -256,10 +256,10 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             fn = defined_fns[fn_name]
 
         return attempt_implementations(
-            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout, debug=debug)
+            new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout, debug=debug, seed=seed)
     raise RuntimeError(f"No implementation found for {scc}")
 
-def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
+def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, seed=42):
     # Evaluate all the combinations of possible
     # implementations of the functions in the SCC
     all_implementations = {}
@@ -269,22 +269,43 @@ def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, 
         all_implementations[fn_name] = fn.get_implementation_strs()
         asserts_str += fn.get_assert_str()
     return attempt_implementations(
-        scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug)
+        scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug, seed=seed)
 
-def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
+def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
+    for edge in scc_edges[scc_idx]:
+        clear_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+    for fn_name in sccs[scc_idx]:
+        fn = defined_fns[fn_name]
+        fn.fixed_implementation = None
+
+def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, seed=42, backtrack=False):
     print("Implementing SCC", scc_idx, sccs[scc_idx])
     if scc_idx in implemented_sccs:
         return implemented_sccs[scc_idx]
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
-        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed)
     for fn_name in sccs[scc_idx]:
         fn = defined_fns[fn_name]
         fn.implement(codegen)
     if not sample_only:
-        dependencies_str += eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug)
-    implemented_sccs[scc_idx] = dependencies_str
-    return dependencies_str
+        if not backtrack:
+            new_str = dependencies_str + eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug)
+        else:
+            try:
+                new_str = dependencies_str + eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
+            except KeyboardInterrupt:
+                raise KeyboardInterrupt
+            except Exception as e:
+                print("Backtracking due to error", e)
+                clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+                for implemented_scc in list(implemented_sccs.keys()):
+                    del implemented_sccs[implemented_scc]
+                new_str = implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed + 1, backtrack=True)
+    else:
+        new_str = dependencies_str
+    implemented_sccs[scc_idx] = new_str
+    return new_str
 
 def fns_to_str(fn, written):
     if fn.name in written:
