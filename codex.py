@@ -95,13 +95,17 @@ class CodeGen():
             # Save updated cache - reopen in case multiple processes running
             # Save to a temp file first, then rename
             # Check if a temp file exists, and if so, wait for it to be deleted
-            while os.path.exists(self.cache_file + ".tmp"):
-                time.sleep(0.01)
+            while os.path.exists(self.cache_file + ".tmp") or os.path.exists(self.cache_file + ".lock"):
+                time.sleep(0.1)
+            # create an empty file to indicate that we are writing to the cache
+            with open(self.cache_file + ".lock", "w") as f:
+                pass
             with open(self.cache_file, "r") as f:
                 self.cache = json.load(f)
             self.cache[cache_key] = results
             with open(self.cache_file + ".tmp", "w") as f:
                 json.dump(self.cache, f, indent=4)
             os.rename(self.cache_file + ".tmp", self.cache_file)
+            os.remove(self.cache_file + ".lock")
             total_tokens -= num_completions * max_tokens
         return results
