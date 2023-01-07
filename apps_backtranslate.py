@@ -73,7 +73,7 @@ def num_imports(solution):
   return sum(1 for line in solution.split('\n') if line.startswith('import ') or line.startswith('from '))
 
 def main():
-  modes = ['train', 'test']
+  modes = ['train']
   for mode in modes:
     apps_mode = os.path.join('APPS', mode)
     for folder in sorted(os.listdir(apps_mode)):
@@ -83,8 +83,14 @@ def main():
           starter = f.read()
       else:
         continue
-      if int(folder) <= 3788:
-        continue
+      # if int(folder) <= 3837:
+      #   continue
+      # Load metadata.json
+      # with open(os.path.join(apps_mode, folder, 'metadata.json')) as f:
+      #   metadata = json.load(f)
+      #   # Check if difficulty is competition
+      #   if metadata['difficulty'] != 'competition':
+      #     continue
       if os.path.isdir(os.path.join(apps_mode, folder)):
         with open(os.path.join(apps_mode, folder, 'solutions.json')) as f:
           solutions = json.load(f)

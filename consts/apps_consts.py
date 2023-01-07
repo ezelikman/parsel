@@ -1,3 +1,8 @@
+# capture any string output from a function
+
+# assert_format = """assert repr(str({name}({assert_in}))) == repr(str({assert_out})) or (repr(str_output(lambda: {name}({assert_in}).rstrip())) == repr(str({assert_out})))"""
+assert_format = """assert compare_output({name}, {assert_in}, {assert_out})\n"""
+
 exec_imports = (
     "import sys\nimport time\nimport itertools\nfrom itertools import accumulate, product, permutations, "
     "combinations\nimport collections\nfrom collections import Counter, OrderedDict, deque, defaultdict, "
@@ -6,12 +11,59 @@ exec_imports = (
     "np\nimport random\nimport heapq\n"
 )
 
+exec_pre = exec_imports + """
+import resource
+resource.setrlimit(resource.RLIMIT_AS, (1024 * 1024 * 1024 * 2, 1024 * 1024 * 1024 * 2))
+
+import io, contextlib
+
+def apps_preprocess(input_str):
+    # if the input is a list, convert it to a string
+    if isinstance(input_str, list):
+        input_str = ' '.join([apps_preprocess(x) for x in input_str])
+    return str(input_str)
+
+def str_output(fn):
+    with io.StringIO() as buf, contextlib.redirect_stdout(buf):
+        ret_val = fn()
+        print_val = buf.getvalue()
+        return print_val if print_val else ret_val
+
+def compare_output(fn, assert_in, assert_out):
+    try:
+        assert repr(str_output(lambda: fn(assert_in)).rstrip()) == repr(str(assert_out))
+        return True
+    except:
+        try:
+            assert repr(str_output(lambda: fn(apps_preprocess(assert_in))).rstrip()) == repr(str(apps_preprocess(assert_out)))
+            return True
+        except:
+            try:
+                assert repr(str_output(lambda: fn(str(assert_in))).rstrip()) == repr(str(str(assert_out)))
+                return True
+            except:
+                try:
+                    assert repr(str_output(lambda: fn(assert_in)).rstrip()) == repr(str(assert_out))
+                    return True
+                except:
+                    try:
+                        assert repr(str_output(lambda: fn(assert_in)).rstrip()) == repr(str(apps_preprocess(assert_out)))
+                        return True
+                    except:
+                        try:
+                            assert abs(float(str_output(lambda: fn(assert_in)).strip()) - float(str(apps_preprocess(assert_out)).strip())) < 1e-6
+                            return True
+                        except:
+                            return False
+
+"""
+
 def eval_fn(fn_str):
     import io, contextlib
     import sys
     import time
-    import resource
     import itertools
+    import resource
     from itertools import accumulate, product, permutations, combinations
     import collections
     from collections import Counter, OrderedDict, deque, defaultdict, ChainMap
@@ -23,7 +75,7 @@ def eval_fn(fn_str):
     import numpy as np
     import random
     import heapq
-    exec(exec_imports + fn_str, locals())
+    exec(exec_pre + fn_str, locals())
 
 def find_str(line, target):
     # Find the first : not in parentheses
@@ -60,12 +112,16 @@ def assert_check(line):
 CONSTS = {
     "rate_limit_tokens_text": 16000,
     "num_completions": 8,
-    "text_model_name": None,
-    "num_text_completions": 8,
+    "num_completions_eval": 8,
+    "num_translation_attempts": 8,
+    "text_model_name": "text-davinci-003",
+    'eval_mode': True,
+    'strict_mode': False,
+    # "text_model_name": None,
+    "num_text_completions": 10,
     "max_text_completions": 8,
-    "exec_pre": "",
+    "exec_pre": exec_pre,
     "needs_indent": True,
-    "eval_mode": False,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],
     "fn_end": "return",
@@ -80,15 +136,15 @@ CONSTS = {
     "assert_helper": lambda _: "",
     "assert_check": assert_check,
     "assert_break": lambda cur_assert: (cur_assert.split("->")[0].strip(), cur_assert.split("->")[1].strip()),
-    "assert_format": "from execute_virtual_home import test_script;assert test_script({name}({assert_in}))\n",
-    "describe_helper":  "# Reviewer:\n"
+    "assert_format": assert_format,
+    "explain_helper":  "# Reviewer:\n"
                         "# Please explain the above function in one sentence with as much detail as possible.\n"
                         "# In your one-sentence description, specify the range and domain of your function precisely.\n"
                         "# Your description should be clear enough that someone could reimplement the function from it.\n"
                         "# Author:\n"
                         "# Sounds good, here's my one-sentence explanation of {name}:\n"
                         "# {name}",
-    "decompose_helper": "# Let's decompose this function into at most three functions:\n"
+    "decompose_helper": "# Let's decompose this function into two functions:\n"
                         "# Function to decompose:\n"
                         "# - {parsel_str}\n"
                         "# Necessary helper functions in the same format of 'fn_name(inputs): description':\n",
@@ -101,9 +157,11 @@ CONSTS = {
     'extension': '.py',
     "output_fn": "print({output_str})\n",
     "full_fn_str": "# {desc}\n{fn_impl}\n",
-    "get_assert_in": lambda assert_str: assert_str.split('==')[0].replace('assert', '').strip(),
+    "get_assert_in": lambda assert_str: assert_str.split('==')[0].replace('assert', '').replace('.rstrip()', '').strip(),
     "exist_asserts": lambda assert_str: 'assert' in assert_str,
     "exec": eval_fn,
     "impl_filter": lambda _: True,
     "implicit_assert": False,
 }
+
+CONSTS['eval_filename'] = f"performance_{CONSTS['num_completions_eval']}" + ('strict' if CONSTS['strict_mode'] else "") + ".csv"

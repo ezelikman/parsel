@@ -19,7 +19,7 @@ class Function:
         self.fixed_implementation = None
 
     def header(self):
-        return CONSTS["header_str"].format(name=self.name, args=', '.join(self.args))
+        return CONSTS["header_str"](self.name, self.args)
 
     def get_codex_input(self):
         base_str = ""
@@ -30,9 +30,10 @@ class Function:
                 continue
             already_listed.append(child.name)
             ret_str = (" -> " + ", ".join(child.ret)) if child.ret else ""
-            base_str += f"from helpers import {child.name}\n"
-            base_str += f"# Description: {child.desc}\n"
-            base_str += f"# Signature: {child.name}({', '.join(child.args)}){ret_str}\n"
+            base_str += CONSTS["desc_helper"].format(desc=child.desc)
+            base_str += CONSTS["sig_helper"].format(
+                sig=f"{child.name}({', '.join(child.args)}){ret_str}")
+            base_str += CONSTS["import"].format(name=child.name)
             base_str += f"\n"
         if self.desc:
             base_str += CONSTS["desc_helper"].format(desc=self.desc)
@@ -43,14 +44,15 @@ class Function:
             base_str += CONSTS["use_helper"].format(
                 uses=', '.join([child.name for child in other_children]))
         base_str += f"{self.header()}:\n"
+        if self.asserts:
+            for cur_assert in self.asserts:
+                base_str += CONSTS["assert_helper"](cur_assert)
         return base_str
 
     def get_assert_str(self):
         assert_str = ""
         for cur_assert in self.asserts:
-            assert_in, assert_out = cur_assert.split("->")
-            assert_in = assert_in.strip()
-            assert_out = assert_out.strip()
+            assert_in, assert_out = CONSTS["assert_break"](cur_assert)
             assert_str += CONSTS["assert_format"].format(
                 name=self.name, assert_in=assert_in, assert_out=assert_out)
         # if len(self.args) == 0: 
@@ -60,26 +62,27 @@ class Function:
     def get_implementation_strs(self):
         def join_str(strs):
             return "\n".join(strs)
-        return [f"{self.header()}:\n{join_str(impl)}" for impl in self.implementations]
+        return [CONSTS["impl_helper"].format(
+            header=self.header(),
+            impls=join_str(impl),
+            asserts=join_str([
+                CONSTS["assert_helper"](cur_assert) for cur_assert in self.asserts]),
+        ) for impl in self.implementations]
 
     def implement(self, codex):
         # print(self.get_codex_input())
         self.implementations = codex.generate(
             codex_in=self.get_codex_input(),
-            # num_completions=8,
-            # max_tokens=500,
-            # num_completions=32,
-            # max_tokens=250,
-            # temperature=0.5,
-            num_completions=16,
+            num_completions=CONSTS['num_completions'],
             max_tokens=500,
-            temperature=0.2,
-            stop=["\ndef"],
-            indented=True,
+            temperature=0.6,
+            stop=CONSTS["gen_stop"],
+            indented=CONSTS['needs_indent'],
             indented_after_first_line=False,
             require=None,
             cache_key=None,
         )
+        self.implementations = list(filter(CONSTS["impl_filter"], self.implementations))[:CONSTS['num_completions_eval']]
     
     def names_to_fns(self, defined_fns):
         for i, child_name in enumerate(self.children):
@@ -95,7 +98,7 @@ class Function:
         if names_to_avoid is None:
             names_to_avoid = []
         body_str = f"{self.fixed_implementation}\n"
-        body_str += CONSTS["describe_helper"].format(name=self.name)
+        body_str += CONSTS["explain_helper"].format(name=self.name)
         gen_desc = codex.generate(body_str, num_completions=1, temperature=0., indented=False)[0]
         new_desc = []
         first_line = True
@@ -148,6 +151,15 @@ class Function:
             if child.name not in visited:
                 visited[child.name] = child
                 child.get_descendants(visited)
+        return visited
+    
+    def get_ancestors(self, visited=None):
+        if visited is None:
+            visited = {self.name: self}
+        for parent in self.parents:
+            if parent.name not in visited:
+                visited[parent.name] = parent
+                parent.get_ancestors(visited)
         return visited
     
     def uses(self, fn_name):
@@ -270,7 +282,7 @@ def get_function_from_examples(missing_fn_name, examples, parent, codex, include
         missing_fn_name=missing_fn_name)
     implementations = codex.generate(
         codex_in=generation_str,
-        num_completions=16,
+        num_completions=CONSTS['num_completions'],
         max_tokens=250,
         temperature=0.2,
         indented_after_first_line=True,
@@ -302,12 +314,43 @@ def get_function_from_examples(missing_fn_name, examples, parent, codex, include
         missing_fn.fix_implementation(impl_str)
     return missing_fns
 
+def find_colon(line):
+    # Find the first : not in parentheses
+    paren_count = 0
+    bracket_count = 0
+    curly_count = 0
+    in_string = None
+    for i, c in enumerate(line):
+        if c == "(":
+            paren_count += 1
+        elif c == ")":
+            paren_count -= 1
+        elif c == "[":
+            bracket_count += 1
+        elif c == "]":
+            bracket_count -= 1
+        elif c == "{":
+            curly_count += 1
+        elif c == "}":
+            curly_count -= 1
+        elif c == "\"" or c == "'":
+            if in_string == c:
+                in_string = None
+            else:
+                in_string = c
+        elif c == ":" and paren_count == 0 and bracket_count == 0 and curly_count == 0 and in_string is None:
+            return i
+    return -1
+
 def parse_line(line):
     # Parse a function definition
-    if ":" not in line:
+    colon_idx = find_colon(line)
+    if colon_idx == -1:
         return line, None, None, None
-    fn_sig, desc = line.split(":", 1)
+    fn_sig, desc = line[:colon_idx], line[colon_idx + 1:]
     desc = desc.strip()
+    if len(fn_sig.split("(", 1)) == 1:
+        raise ValueError(f"Invalid function signature: {fn_sig}")
     fn_name, fn_args = fn_sig.split("(", 1)
     if "->" in fn_args:
         fn_args, fn_ret = fn_args.split("->", 1)
@@ -329,13 +372,19 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
     if fn_name in scope:
         if fn_args is not None:
             print(f"Warning: Function {fn_name} already defined")
-            return defined_fns[fn_name]
+            new_fn = defined_fns[fn_name]
+            if parent is not None:
+                if parent not in new_fn.parents:
+                    new_fn.parents.append(parent)
+                if new_fn not in parent.children:
+                    parent.children.append(new_fn)
+            return new_fn
             # raise RuntimeError(f"Function {fn_name} already defined")
         new_fn = defined_fns[fn_name]
         if parent is not None:
             new_fn.parents.append(parent)
             parent.children.append(new_fn)
-        return defined_fns[fn_name]
+        return new_fn
     else:
         if fn_args is not None:
             new_fn = Function(
@@ -349,6 +398,7 @@ def parse_to_fn(line, parent, defined_fns, scope=None):
             if parent is not None:
                 parent.children.append(new_fn)
                 defined_fns[fn_name] = new_fn
+                new_fn.prefix = parent.prefix
             return new_fn
         else:
             print(f"Function {fn_name} not defined; skipped")
