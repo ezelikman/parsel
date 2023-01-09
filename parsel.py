@@ -49,7 +49,7 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     implementation_attempt = dependencies_str
     for fn_implementation in implementation_set:
         implementation_attempt += fn_implementation + "\n"
-    passed = []
+    asserts_passed = []
     failure = None
     attempted = 0
     for assert_str in asserts_str.splitlines():
@@ -259,7 +259,9 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.1, debug=False, seed=42):
+force_expand_counter = 0
+max_expand_counter = 2
+def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=1, debug=False, seed=42):
     global force_expand_counter, max_expand_counter
     print("Attempting to implement", scc)        
     if force_expand_counter == 0:

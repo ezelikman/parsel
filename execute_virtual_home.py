@@ -14,6 +14,29 @@ from virtualhome.simulation.evolving_graph.scripts import read_script_from_strin
 from virtualhome.simulation.evolving_graph.execution import ScriptExecutor
 from virtualhome.simulation.evolving_graph.environment import EnvironmentGraph
 from virtualhome.simulation.evolving_graph import utils
+import openai
+import numpy as np
+import torch
+from sentence_transformers import SentenceTransformer
+from sentence_transformers import util as st_utils
+import json
+
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# translation_lm = SentenceTransformer("stsb-roberta-large").to(device)
+
+# # create action embeddings using Translated LM
+# with open('language-planner/src/available_actions.json', 'r') as f:
+#     action_list = json.load(f)
+# action_list_embedding = torch.load("language-planner/src/action_list_embedding.pt", map_location=torch.device('cpu') )
+
+# # helper function for finding similar sentence in a corpus given a query
+# def find_most_similar(query_str, corpus_embedding):
+#     query_embedding = translation_lm.encode(query_str, convert_to_tensor=True, device=device)
+#     # calculate cosine similarity against each candidate sentence in the corpus
+#     cos_scores = st_utils.pytorch_cos_sim(query_embedding, corpus_embedding)[0].detach().cpu().numpy()
+#     # retrieve high-ranked index and similarity score
+#     most_similar_idx, matching_score = np.argmax(cos_scores), np.max(cos_scores)
+#     return most_similar_idx, matching_score
 
 def add_node(graph, n):
     graph['nodes'].append(n)
@@ -115,9 +138,13 @@ NL_ACTIONS = [['close'], ['cut'], ['drink'], ['drop'], ['eat'], ['find'], ['grab
 M_ACTIONS = ['[CLOSE]', '[CUT]', '[DRINK]', '[DROP]', '[EAT]', '[FIND]', '[GRAB]', '[GREET]', '[LIE]', '[LOOKAT]', '[MOVE]', '[OPEN]', '[PLUGIN]', '[PLUGOUT]', '[POINTAT]', '[POUR]', '[PULL]', '[PUSH]', '[PUTBACK]', '[PUTIN]', '[PUTOBJBACK]', '[PUTOFF]', '[PUTON]', '[READ]', '[RELEASE]', '[RINSE]', '[RUN]', '[SCRUB]', '[SIT]', '[SLEEP]', '[SQUEEZE]', '[STANDUP]', '[SWITCHOFF]', '[SWITCHON]', '[TOUCH]', '[TURNTO]', '[TYPE]', '[WAKEUP]', '[WALK]', '[WASH]', '[WATCH]', '[WIPE]']
 
 def get_obj_id(obj, graph):
+    return 1
     print(obj)
     # import pdb;pdb.set_trace()
-    return [node['id'] for node in graph['nodes'] if node['class_name'] == obj][0]
+    try:
+        return [node['id'] for node in graph['nodes'] if node['class_name'] == obj][0]
+    except:
+        return [node['id'] for node in graph['nodes'] if node['class_name'].endswith(obj)][0]
 
 def formalize_script(gen_script, graph):
     # with open("language-planner/src/available_actions.json") as f:
@@ -126,15 +153,16 @@ def formalize_script(gen_script, graph):
     script = []
     
     for l in gen_script:
-        # for obj in objects:
-        #     if obj in l:
-        #         l = l.replace(obj, "<{}> ({})".format(obj, objects[obj]))
+        # most_similar_idx, matching_score = find_most_similar(l, action_list_embedding)
+        # l = action_list[most_similar_idx]
+        print(l)
+        l = " " + l + " "
         for acts_idx, acts in enumerate(NL_ACTIONS):
-            if all([a in l for a in acts]):
+            if all([" " + a + " " in l for a in acts]):
                 for a in acts:
-                    l = l.replace(a + " ", "|")
+                    l = l.replace(" " + a + " ", "|")
                 objects = l.split("|")[1:]
-                l = M_ACTIONS[acts_idx] + " " + " ".join(["<{}> ({})".format( obj.strip(), get_obj_id(obj.strip(), graph)) for obj in objects])
+                l = M_ACTIONS[acts_idx] + " " + " ".join(["<{}> ({})".format( re.sub(r'[\W_]+','_', obj.lower().strip()), get_obj_id(re.sub(r'[\W_]+','_', obj.lower().strip()), graph)) for obj in objects])
                 break
         script.append(l)
     return script
@@ -182,7 +210,7 @@ def check_executability(string, graph_dict):
         return able_to_be_parsed, able_to_be_executed, None
 
 def test_script(gen_script, strict = False):    
-    cache_file = "virtual_home_test_graph.json"
+    cache_file = "virtual_home_test_graph_4.json"
     if os.path.exists(cache_file) and not strict:
         with open(cache_file, 'r') as f:
             graph = json.load(f)
@@ -191,10 +219,9 @@ def test_script(gen_script, strict = False):
         comm.reset(4)
         success, graph = comm.environment_graph()
 
-        graph = init_graph(comm, graph)
+        # graph = init_graph(comm, graph)
         with open(cache_file, 'w') as f:
             json.dump(graph, f)
-    
 
     print(gen_script)
     # gen_script = ['grab cup', 'put cup on table', 'grab bread', 'put bread on desk']
@@ -217,7 +244,7 @@ def test_script(gen_script, strict = False):
         success, message = comm.render_script(script=script,
                                     processing_time_limit=60,
                                     find_solution=False,
-                                    image_width=320,
+                                     image_width=320,
                                     image_height=240,  
                                     skip_animation=True,
                                     recording=False,
