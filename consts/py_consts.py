@@ -62,6 +62,7 @@ CONSTS = {
     "num_completions": 8,
     "text_model_name": None,
     "num_text_completions": 8,
+    "num_completions_eval": 8,
     "max_text_completions": 8,
     "exec_pre": "",
     "needs_indent": True,
@@ -108,3 +109,5 @@ CONSTS = {
     "impl_filter": lambda _: True,
     "implicit_assert": False,
 }
+
+CONSTS['eval_filename'] = f"performance_{CONSTS['num_completions_eval']}" + ('strict' if CONSTS['strict_mode'] else "") + ".csv"
