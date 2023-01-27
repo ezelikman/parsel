@@ -1,7 +1,7 @@
 An env is a dictionary of {'var':val} pairs, with a link to its outer environment in env['_outer'].
-A procedure is a lambda expression, with parms, body, and env which calls eval_lisp on the body.
+A procedure is a lambda expression, with parms, body, and env which calls eval_exp on the body.
 #*#*#
-evaluate_program(program): Initialize a standard environment. Parse a sequence of expressions as a list, returning the result of the last one.
+evaluate_program(program): Initialize a standard environment. Parse and evaluate a list of expressions, returning the final result.
 ['(define square (lambda (r) (* r r)))', '(square 3)'] -> 9
   get_env(parms, args, env=None): Return a new env inside env with parms mapped to their corresponding args, and env as the new env's outer env.
   [], [] -> {'_outer': None}
@@ -20,7 +20,7 @@ evaluate_program(program): Initialize a standard environment. Parse a sequence o
       get_simple_math
   parse_and_update(expression, env): Parse an expression, return the result.
   "(+ 1 (* 2 3))", {'+': (lambda x, y: x + y), '*': (lambda x, y: x * y), '_outer': None} -> 7
-    eval_lisp(x, env): Evaluate an expression in an environment and return the result. Check if x is a list, a string, or neither, and call the corresponding function.
+    eval_exp(x, env): Evaluate an expression in an environment and return the result. Check if x is a list, a string, or neither, and call the corresponding function.
     1, {'_outer': None} -> 1
       find(env, var): Find the value of var in the innermost env where var appears.
       {'a':4, '_outer':None}, 'a' -> 4
@@ -32,16 +32,17 @@ evaluate_program(program): Initialize a standard environment. Parse a sequence o
       list_case(x, env): Handle the function specified by the first value of x. Handle the first value of x being quote, if, define, set!, lambda, or otherwise. Return the result.
       ['quote', 'a'], {'_outer': None} -> 'a'
       ['if', True, 1, 2], {'_outer': None} -> 1
+      ['define', 'a', 1], {'_outer': None} -> None
         get_procedure(parms, body, env): Return a procedure which evaluates body in a new environment with parms bound to the args passed to the procedure (in the same order as parms).
           eval_procedure(parms, body, env, args): Gets a procedure and returns the result of evaluating proc(*args) in env. Should not be called directly.
           ['r'], ['*', 'pi', ['*', 'r', 'r']], {'*': (lambda x, y: x * y), 'pi': 3, '_outer': None}, [1] -> 3
             get_procedure
             get_env
-            eval_lisp
+            eval_exp
         otherwise_case(x, env): Get the procedure by evaluating the first value of x. Then, evaluate the arguments and apply the procedure to them. Return the result.
         ['+', 1, 2], {'+': (lambda x, y: x + y), '_outer': None} -> 3
-          eval_lisp
-        eval_lisp
+          eval_exp
+        eval_exp
       not_list_case(x, env): Return x
       1, {} -> 1
     parse(program): Read a Scheme expression from a string.
@@ -55,6 +56,6 @@ evaluate_program(program): Initialize a standard environment. Parse a sequence o
         "1" -> 1
         "a" -> "a"
         "1.2" -> 1.2
-    lispstr(exp): Convert a Python object back into a Lisp-readable string.
+    nested_list_to_str(exp): Convert a nested list into a string with nesting represented by parentheses.
     1 -> "1"
     [1, '+', [2, '*', 3]] -> "(1 + (2 * 3))"
