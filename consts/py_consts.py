@@ -62,8 +62,9 @@ def assert_check(line):
 
 CONSTS = {
     "rate_limit_tokens_text": 16000,
-    "num_completions": 32,
-    "num_completions_eval": 32,
+    "num_completions": 64,
+    "min_completions": 8,
+    "num_completions_eval": 64,
     "text_model_name": None,
     "timeout": 0.5,
     "num_text_completions": 8,
