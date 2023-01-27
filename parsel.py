@@ -145,7 +145,10 @@ def kill_remaining_futures(executor, futures):
 # Use multiprocessing to try to fill in the implementation of an SCC
 # This function could definitely use some refactoring
 # Maybe in the future Parsel will do that for me
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=30, min_attempts=500, max_attempts=100000, min_time=120, max_time=240, debug=False, seed=42):
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=None, min_attempts=500, max_attempts=100000, min_time=120, max_time=240, debug=False, seed=42):
+    if num_workers is None:
+        cpu_count = os.cpu_count()
+        num_workers = cpu_count if cpu_count is not None else 1
     if 'max_attempts' in CONSTS:
         max_attempts = CONSTS['max_attempts']
     if debug and debug != "best":
