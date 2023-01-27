@@ -416,33 +416,45 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
         dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
-    for fn_name in sccs[scc_idx]:
-        fn = defined_fns[fn_name]
-        fn.implement(codegen)
     
-    # We support a "sample only" mode, where we don't actually
-    # implement the SCC, but just try to run inference.
-    # This let's us parallelize inference and implementation.
-    if not sample_only:
+    num_completions = CONSTS["min_completions"] if "min_completions" in CONSTS else CONSTS["num_completions"]
+    error = None
+    # We exponentially increase the number of completions until we reach the max, "num_completions"
+    while num_completions <= CONSTS["num_completions"]:
+        print(f"Trying {num_completions} completions")
+        try:
+            for fn_name in sccs[scc_idx]:
+                fn = defined_fns[fn_name]
+                fn.implement(codegen, num_completions=num_completions)
+            
+            # We support a "sample only" mode, where we don't actually
+            # implement the SCC, but just try to run inference.
+            # This let's us parallelize inference and implementation.
+            if not sample_only:
+                new_str = dependencies_str + eval_scc(
+                    sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
+            else:
+                new_str = dependencies_str
+            implemented_sccs[scc_idx] = new_str
+            return new_str
+        except KeyboardInterrupt:
+            raise KeyboardInterrupt
+        except Exception as e:
+            error = e
+            print("Error", e)
+        num_completions *= 2
+    if backtrack:
         # Backtracking allows us to try new implementations
         # of the dependencies if we fail to implement the SCC
-        if not backtrack:
-            new_str = dependencies_str + eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
-        else:
-            try:
-                new_str = dependencies_str + eval_scc(sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
-            except KeyboardInterrupt:
-                raise KeyboardInterrupt
-            except Exception as e:
-                print("Backtracking due to error", e)
-                clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
-                for implemented_scc in list(implemented_sccs.keys()):
-                    del implemented_sccs[implemented_scc]
-                new_str = implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed + 1, backtrack=True)
-    else:
-        new_str = dependencies_str
-    implemented_sccs[scc_idx] = new_str
-    return new_str
+        print("Backtracking due to error", error)
+        clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+        for implemented_scc in list(implemented_sccs.keys()):
+            del implemented_sccs[implemented_scc]
+        new_str = implement_scc(
+            scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed + 1, backtrack=True)
+        implemented_sccs[scc_idx] = new_str
+        return new_str
+    raise error
 
 # Convert a function to its string representation
 # Including all its children
