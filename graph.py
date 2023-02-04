@@ -81,7 +81,7 @@ def get_graph(program):
     root_fn_graph = temp_root.children[0]
     return root_fn_graph, defined_fns
 
-def strongly_connected_components(defined_fns):
+def strongly_connected_components(defined_fns, consider_asserts=True):
     # Identify the nodes reachable from each node
     reachable = {fn_name: {fn_name} for fn_name in defined_fns}
     changed = True
@@ -98,7 +98,7 @@ def strongly_connected_components(defined_fns):
                     # Try to add the child to the set of functions reachable from fn_name
                     reachable[fn_name].add(child.name)
                     # If the child has no asserts, it also depends on the parent
-                    if not child.asserts and not CONSTS['implicit_assert']:
+                    if not child.asserts and not CONSTS['implicit_assert'] and consider_asserts:
                         initial_len_2 = len(reachable[child.name])
                         reachable[child.name].add(fn_reachable_name)
                         if len(reachable[child.name]) > initial_len_2:
