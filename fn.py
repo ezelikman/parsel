@@ -59,13 +59,25 @@ class Function:
                 base_str += CONSTS["assert_helper"](cur_assert)
         return base_str
 
+    # Constructs prompt for code generation
+    def get_codex_test_input(self):
+        base_str = self.get_codex_input()
+        base_str += f"""  pass
+
+# check the correctness of {self.name}
+assert"""
+        return base_str
+
     # Convert Parsel-style asserts to asserts in the target language
     def get_assert_str(self):
         assert_str = ""
         for cur_assert in self.asserts:
             assert_in, assert_out = CONSTS["assert_break"](cur_assert)
-            assert_str += CONSTS["assert_format"].format(
-                name=self.name, assert_in=assert_in, assert_out=assert_out)
+            if isinstance(CONSTS["assert_format"], str):
+                assert_str += CONSTS["assert_format"].format(
+                    name=self.name, assert_in=assert_in, assert_out=assert_out)
+            else:
+                assert_str += CONSTS["assert_format"](self.name, assert_in, assert_out)
         return assert_str
     
     # Get the string representation of all implementations of this function
@@ -103,7 +115,26 @@ class Function:
         if "shuffle_implementations" in CONSTS and CONSTS["shuffle_implementations"]:
             random.shuffle(self.implementations)
         self.implementations = self.implementations[:CONSTS['num_completions_eval']]
-    
+
+    # Generate tests for this function
+    def generate_tests(self, codex, num_completions=None):
+        if num_completions is None:
+            num_completions = CONSTS['num_completions']
+        tests = codex.generate(
+            codex_in=self.get_codex_test_input(),
+            num_completions=num_completions * 5,
+            max_tokens=100,
+            temperature=0.6,
+            stop="\n",
+            indented=CONSTS['needs_indent'],
+            indented_after_first_line=False,
+            require=None,
+            cache_key=None,
+        )
+        tests = set([test[0] for test in tests if test])
+        self.asserts = tests
+        return tests
+
     # Converts any parent names to references to the actual parent functions
     # Same for children
     # This is because sometimes we need to create references to functions before they are defined
@@ -253,7 +284,7 @@ class Function:
             child_descendants_set = set(child.get_descendants().keys())
             if not child_descendants_set.issubset(already_defined):
                 child.rearrange(already_defined)
-
+    
     # Convert the function and its children to a Parsel string
     def to_parsel_str(self, already_defined=None, override_names=True, include_children=True, include_asserts=True):
         if already_defined is None:
@@ -352,7 +383,7 @@ def get_function_from_examples(missing_fn_name, examples, parent, codex, include
         missing_fn.fix_implementation(impl_str)
     return missing_fns
 
-def find_colon(line):
+def find_str(line, target):
     # Find the first : not in parentheses
     paren_count = 0
     bracket_count = 0
@@ -376,13 +407,13 @@ def find_colon(line):
                 in_string = None
             else:
                 in_string = c
-        elif c == ":" and paren_count == 0 and bracket_count == 0 and curly_count == 0 and in_string is None:
+        elif c == target and paren_count == 0 and bracket_count == 0 and curly_count == 0 and in_string is None:
             return i
     return -1
 
 def parse_line(line):
     # Parse a function definition
-    colon_idx = find_colon(line)
+    colon_idx = find_str(line, ":")
     if colon_idx == -1:
         return line, None, None, None
     fn_sig, desc = line[:colon_idx], line[colon_idx + 1:]

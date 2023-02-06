@@ -1,3 +1,7 @@
+from contextlib import redirect_stdout
+
+vis = False
+
 exec_imports = (
     "import sys\nimport time\nimport itertools\nfrom itertools import accumulate, product, permutations, "
     "combinations\nimport collections\nfrom collections import Counter, OrderedDict, deque, defaultdict, "
@@ -6,7 +10,17 @@ exec_imports = (
     "np\nimport random\nimport heapq\n"
 )
 
+if vis:
+    exec_imports += "import clip\nfrom PIL import Image\n"
+    exec_imports += "import torch\nfrom torch import nn\nfrom torch.nn import functional as F\n"
+
 def eval_fn(fn_str):
+    if vis:
+        import clip
+        from PIL import Image
+        import torch
+        from torch import nn
+        from torch.nn import functional as F
     import io, contextlib
     import sys
     import time
@@ -23,7 +37,9 @@ def eval_fn(fn_str):
     import numpy as np
     import random
     import heapq
-    exec(exec_imports + fn_str, locals())
+    f = io.StringIO()
+    with redirect_stdout(f):
+        exec(exec_imports + fn_str, locals())
 
 def prepend_hash(lines_str):
     return "\n".join(["#" + line for line in lines_str.split("\n")])
@@ -60,6 +76,16 @@ def assert_check(line):
     line = line.strip()
     return find_str(line, ":") == -1 and "->" in line and (find_str(line, "-") == find_str(line, ">") - 1)
 
+def assert_break(cur_assert):
+    if "->" not in cur_assert:
+        return cur_assert, None
+    return (cur_assert.split("->")[0].strip(), cur_assert.split("->")[1].strip())
+
+def assert_format(name, assert_in, assert_out):
+    if assert_out is not None:
+        return f"assert repr(str({name}({assert_in}))) == repr(str({assert_out})) or ({name}({assert_in}) == {assert_out})\n"
+    return f"assert {assert_in}\n"
+
 CONSTS = {
     "rate_limit_tokens_text": 16000,
     "num_completions": 64,
@@ -67,6 +93,7 @@ CONSTS = {
     "num_completions_eval": 64,
     "text_model_name": None,
     "timeout": 0.5,
+    "shuffle_always": True,
     "num_text_completions": 8,
     "max_text_completions": 8,
     "exec_pre": exec_imports,
@@ -86,8 +113,8 @@ CONSTS = {
     "impl_helper": "{header}:\n{impls}",
     "assert_helper": lambda _: "",
     "assert_check": assert_check,
-    "assert_break": lambda cur_assert: (cur_assert.split("->")[0].strip(), cur_assert.split("->")[1].strip()),
-    "assert_format": "assert repr(str({name}({assert_in}))) == repr(str({assert_out})) or ({name}({assert_in}) == {assert_out})\n",
+    "assert_break": assert_break,
+    "assert_format": assert_format,
     "explain_helper":  "# Reviewer:\n"
                         "# Please explain the above function in one sentence with as much detail as possible.\n"
                         "# In your one-sentence description, specify the range and domain of your function precisely.\n"

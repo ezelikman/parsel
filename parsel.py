@@ -2,15 +2,13 @@ import argparse
 from codex import CodeGen
 from graph import get_graph, strongly_connected_components, get_root
 import itertools
-from fn import get_function_from_examples
+from fn import get_function_from_examples, find_str
 import concurrent.futures
 from multiprocessing import get_context
 from tqdm import tqdm
 import random
 import time
 from consts import CONSTS, mode
-import multiprocessing
-import subprocess
 import os
 import ast
 
@@ -45,6 +43,7 @@ def fill_in_missing_fn(missing_fn_name, scc, defined_fns, implementation_set, im
         except:
             continue
 
+
 # Join a set of function implementations to a string, along with
 # the already-implemented dependencies of the functions
 def to_implementation_str(implementation_set, dependencies_str):
@@ -53,8 +52,9 @@ def to_implementation_str(implementation_set, dependencies_str):
         implementation_attempt += fn_implementation + "\n"
     return implementation_attempt
 
+
 # Try to fill in the implementation of a set of functions in an SCC
-def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, catch_name_exceptions=False, best_attempt=0):
+def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, best_attempt=0):
     implementation_attempt = to_implementation_str(implementation_set, dependencies_str)
     asserts_passed = []
     failure = None
@@ -66,8 +66,6 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     # it may be necessary for other languages
     # where multiple constraints can't be applied at once
     for assert_str in asserts_str.splitlines():
-        n_remaining = len(asserts_str.splitlines()) - attempted
-        n_remaining_to_best_beat = best_attempt - len(asserts_passed)
         # We do still give up if we've already done better than this attempt
         if (len(asserts_str.splitlines()) - attempted < best_attempt) or (CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
             failure = Exception("Already beat this attempt")
@@ -111,6 +109,7 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     implementation_attempt += asserts_str
     return implementation_attempt, implementation_set, None, asserts_passed
 
+
 # Kill any futures that haven't finished yet
 # I don't know why this is necessary, and it really feels like overkill
 # but sometimes I can't seem to kill the subprocesses otherwise
@@ -142,6 +141,122 @@ def kill_remaining_futures(executor, futures):
     os.system("pkill -f multiprocessing.spawn")
 
 
+# Wrap up the results of a function implementation attempt
+def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, executor, futures, best_attempt):
+    implementation_set = best_attempt[1]
+    asserts_passed = best_attempt[2]
+    error = best_attempt[3]
+    print("Asserts passed:", len(asserts_passed))
+    for assert_passed in asserts_passed:
+        print("    ", assert_passed)
+    if error is not None and not generate_tests:
+        if len(asserts_passed) > best_attempt[0]:
+            best_attempt = (len(asserts_passed), implementation_set, asserts_passed)
+        raise error
+    try:
+        kill_remaining_futures(executor, futures)
+    except:
+        pass
+    try:
+        pbar.close()
+    except:
+        pass
+    print("Successfully implemented", scc)
+    if generate_tests:
+        # Clear out the asserts in the SCC
+        for fn_name in scc:
+            fn = defined_fns[fn_name]
+            fn.asserts = []
+        # Write the passed asserts to the root
+        new_fns = {dict_key: dict_value for dict_key, dict_value in defined_fns.items() if dict_key in scc}
+        root = get_root(new_fns)
+        defined_fns[root].asserts = [assert_passed.replace("assert", "", 1).strip() for assert_passed in asserts_passed]
+                    
+    if CONSTS['eval_mode']:
+        with open(CONSTS['eval_filename'], "a+") as f:
+            f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
+    for fn_name, implementation in zip(scc, implementation_set):
+        fn = defined_fns[fn_name]
+        if fn.fixed_implementation is None:
+            fn.fix_implementation(implementation)
+    implementation_attempt = to_implementation_str(implementation_set, dependencies_str) + "\n" + "\n".join(asserts_passed)
+    return implementation_attempt,best_attempt
+
+
+# This is a helper function to keep track of the best attempts
+def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error):
+    asserts_passed_hash = hash(tuple(sorted(asserts_passed)))
+    if asserts_passed_hash not in all_attempts:
+        all_found = {fn: [] for fn in scc}
+        for fn in scc:
+            for assert_passed in asserts_passed:
+                if fn in assert_passed:
+                    assert_target = assert_passed.split("==")[-1].strip()
+                    comma_idx = find_str(assert_target, ",")
+                    if comma_idx != -1:
+                        assert_target = assert_target[:comma_idx].strip()
+                    all_found[fn] += [assert_target]
+        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
+        if (not generate_tests) or found_successful_generation:
+            all_attempts[asserts_passed_hash] = (
+                len(asserts_passed),
+                implementation_set,
+                asserts_passed,
+                error
+            )
+    else:
+        # We use the CodeT score if we're generating tests
+        if generate_tests:
+            total_passed = len(asserts_passed) + all_attempts[asserts_passed_hash][0]
+        else:
+            total_passed = len(asserts_passed)
+        all_attempts[asserts_passed_hash] = (
+            total_passed,
+            all_attempts[asserts_passed_hash][1],
+            all_attempts[asserts_passed_hash][2],
+            all_attempts[asserts_passed_hash][3]
+        )
+
+
+# Process the result of a single implementation attempt
+def eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_attempts, pbar, executor, futures, result):
+    implementation_attempt, implementation_set, error, asserts_passed = result
+
+    # If we got an error, check if we have a new best attempt
+    if error is not None:
+        update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error)
+        raise error
+
+    kill_remaining_futures(executor, futures)
+    pbar.close()
+
+    # We succeeded, so we can return the implementation
+    print("Successfully implemented", scc)
+    if CONSTS['eval_mode']:
+        # We manually edit a csv file to store the results
+        # Right now evaluation on datasets isn't the main focus, so this is fine
+        # There's almost certainly a more elegant way to do this
+        with open(CONSTS['eval_filename'], "a+") as f:
+            f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
+
+    # Since we found a working solution, we can consider the implementation fixed
+    for fn_name, implementation in zip(implementation_set_keys, implementation_set):
+        fn = defined_fns[fn_name]
+        if fn.fixed_implementation is None:
+            fn.fix_implementation(implementation)
+    return implementation_set,implementation_attempt
+
+# If we fail to implement an SCC, we need to kill all the remaining futures and clean up
+def handle_failure(scc, asserts_str, pbar, executor, futures, best_attempt):
+    kill_remaining_futures(executor, futures)
+    pbar.close()
+    print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
+            # open "performance.csv" and write the score in the current line
+    if CONSTS['eval_mode']:
+        with open(CONSTS['eval_filename'], "a+") as f:
+            f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
+
+
 # Use multiprocessing to try to fill in the implementation of an SCC
 # This function could definitely use some refactoring
 # Maybe in the future Parsel will do that for me
@@ -167,153 +282,97 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
 
     # We're assuming at least 10% of the implementations are valid
     max_to_try = min(max_attempts * 10, len(implementation_sets))
-    if CONSTS['eval_mode']:
+    if CONSTS['eval_mode'] or ("shuffle_always" in CONSTS and CONSTS['shuffle_always']):
         # We should only shuffle if we are going to evaluate everything
         # Otherwise we can save some time by sampling
         if max_to_try == len(implementation_sets):
             random.shuffle(implementation_sets)
         else:
             implementation_sets = random.sample(implementation_sets, max_to_try)
-    best_attempt = (0, None)
+    all_attempts = {}
     start_time = time.time()
 
     # We use a ProcessPoolExecutor to parallelize the work
     # This helps us handle variance in the runtime of each implementation
     # As well as broadly make better use of compute
-    with tqdm(total=n_to_try) as pbar:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=get_context('spawn')) as executor:
-            futures = []
-            submitted = 0
+    pbar = tqdm(total=n_to_try)
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=get_context('spawn')) as executor:
+        futures = []
+        submitted = 0
 
-            # Loop over as many implementation sets as we can
-            for implementation_set_indices in implementation_sets:
-                # We need to convert the implementation set indices to the actual implementation_set
-                implementation_set = [all_implementation_sets[i][impl_id] for i, impl_id in enumerate(implementation_set_indices)]
-                if (not (time.time() - start_time > min_time and submitted > min_attempts)) and ((time.time() - start_time) < max_time):
-                    try:
-                        # Check for syntax errors
-                        # CONSTS['exec'](to_implementation_str(implementation_set, dependencies_str))
-                        ast.parse(to_implementation_str(implementation_set, dependencies_str))
-                        futures.append(executor.submit(
-                            eval_implementation, implementation_set, dependencies_str, asserts_str, verbose, best_attempt[0]))
-                        submitted += 1
-                    except:
-                        # print(to_implementation_str(implementation_set, dependencies_str))
-                        continue
-
-                # Once we have a full batch of futures, avoid submitting more
-                # Check if any of the futures have finished and succeeded
-                if submitted % num_workers == 0 or submitted == n_to_try:
-                    for future in futures:
-                        # If we are debugging in the full debug mode, we want to stop at every implementation
-                        if debug and debug != "best":
-                            breakpoint()
-                        
-                        # Check if the future has succeeded
-                        try:
-                            result = future.result(timeout=timeout)
-                            if result is not None:
-                                implementation_attempt, implementation_set, error, asserts_passed = result
-
-                                # If we got an error, check if we have a new best attempt
-                                if error is not None:
-                                    if len(asserts_passed) > best_attempt[0]:
-                                        best_attempt = (len(asserts_passed), implementation_set)
-                                    raise error
-
-                                kill_remaining_futures(executor, futures)
-                                pbar.close()
-
-                                # We succeeded, so we can return the implementation
-                                print("Successfully implemented", scc)
-                                if CONSTS['eval_mode']:
-                                    # We manually edit a csv file to store the results
-                                    # Right now evaluation on datasets isn't the main focus, so this is fine
-                                    # There's almost certainly a more elegant way to do this
-                                    with open(CONSTS['eval_filename'], "a+") as f:
-                                        f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
-
-                                # Since we found a working solution, we can consider the implementation fixed
-                                for fn_name, implementation in zip(implementation_set_keys, implementation_set):
-                                    fn = defined_fns[fn_name]
-                                    if fn.fixed_implementation is None:
-                                        fn.fix_implementation(implementation)
-                                return implementation_attempt
-                            else:
-                                pbar.update(1)
-                        except KeyboardInterrupt:
-                            kill_remaining_futures(executor, futures)
-                            raise KeyboardInterrupt
-                        except:
-                            pbar.update(1)
-                            continue
-                    futures = []
-                # If we have submitted all the futures we want to submit, break
-                if submitted == n_to_try:
-                    break
-            
-            # When we have exhausted all the implementation sets, we can try reattempting the best attempt
-            # If we are debugging, even in 'best' mode, we want to stop at this point
-            if debug:
-                print(CONSTS['exec_pre'])
-                print(best_attempt[0])
-                print(dependencies_str)
-                if best_attempt[1] is not None:
-                    print("\n".join(best_attempt[1]))
-                else:
-                    # Print the most recent attempt
-                    print("\n".join(implementation_set))
+        # Loop over as many implementation sets as we can
+        for implementation_set_indices in implementation_sets:
+            # We need to convert the implementation set indices to the actual implementation_set
+            implementation_set = [all_implementation_sets[i][impl_id] for i, impl_id in enumerate(implementation_set_indices)]
+            if (not (time.time() - start_time > min_time and submitted > min_attempts)) and ((time.time() - start_time) < max_time):
+                try:
+                    # Check for syntax errors
+                    # CONSTS['exec'](to_implementation_str(implementation_set, dependencies_str))
+                    ast.parse(to_implementation_str(implementation_set, dependencies_str))
+                    futures.append(executor.submit(
+                        eval_implementation, implementation_set, dependencies_str, asserts_str, verbose))
+                    submitted += 1
+                except:
                     pass
-                print(asserts_str)
-                breakpoint()
 
-            # Try reattempting the best attempt, but with more time
-            reattempt = executor.submit(
-                eval_implementation, best_attempt[1], dependencies_str, asserts_str, verbose)
-            
-            # This is pretty similar to the above code,
-            # so could probably be refactored
-            # but there are enough differences and arguments that it would
-            # likely be a bit bloated. Can revisit later
-            try:
-                print("Reattempting", scc)
-                result = reattempt.result(timeout=timeout * 10)
-                if result is not None:
-                    implementation_attempt, implementation_set, error, asserts_passed = result
-                    print("Reattempted", scc)
-                    print("Original attempt:", best_attempt[0])
-                    print("Asserts passed:", len(asserts_passed))
-                    for assert_passed in asserts_passed:
-                        print("    ", assert_passed)
-                    if error is not None:
-                        if len(asserts_passed) > best_attempt[0]:
-                            best_attempt = (len(asserts_passed), implementation_set)
-                        raise error
-                    kill_remaining_futures(executor, futures)
-                    pbar.close()
-                    print("Successfully implemented", scc)
-                    if CONSTS['eval_mode']:
-                        with open(CONSTS['eval_filename'], "a+") as f:
-                            f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
-                    for fn_name, implementation in zip(scc, implementation_set):
-                        fn = defined_fns[fn_name]
-                        if fn.fixed_implementation is None:
-                            fn.fix_implementation(implementation)
-                    return implementation_attempt
-            except Exception as e:
-                print("Reattempt error:", e)
-            
-            # Note that the repetitiveness of kill_remaining_futures is intentional
-            # If we do it outside the loop, we have the unfortunate situation where
-            # sometimes we get stuck in the executor context, and the futures never get cancelled.
-            # I have no idea why this happens, but this is a workaround
+            # Once we have a full batch of futures, avoid submitting more
+            # Check if any of the futures have finished and succeeded
+            if submitted % num_workers == 0 or submitted == n_to_try:
+                for future in futures:
+                    # If we are debugging in the full debug mode, we want to stop at every implementation
+                    if debug and debug != "best":
+                        breakpoint()
+                    # Check if the future has succeeded
+                    try:
+                        result = future.result(timeout=timeout)
+                        if result is not None:
+                            implementation_set, implementation_attempt = eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_attempts, pbar, executor, futures, result)
+                            return implementation_attempt
+                        else:
+                            pbar.update(1)
+                    except KeyboardInterrupt:
+                        kill_remaining_futures(executor, futures)
+                        raise KeyboardInterrupt
+                    except:
+                        pbar.update(1)
+                        continue
+                futures = []
+            # If we have submitted all the futures we want to submit, break
+            if submitted == n_to_try:
+                break
+        
+        # When we have exhausted all the implementation sets, we can try reattempting the best attempt
+        # If we are debugging, even in 'best' mode, we want to stop at this point
+        if len(all_attempts) == 0:
             kill_remaining_futures(executor, futures)
-            pbar.close()
-            print(f"Failed implementing {scc}, best attempt: {best_attempt[0]} / {len(asserts_str.splitlines())}")
-            # open "performance.csv" and write the score in the current line
-            if CONSTS['eval_mode']:
-                with open(CONSTS['eval_filename'], "a+") as f:
-                    f.write(f", {best_attempt[0]} / {len(asserts_str.splitlines())}")
+            raise Exception("No implementations found")
+        best_attempt = max(all_attempts.values())
+        if debug:
+            print(CONSTS['exec_pre'])
+            print(best_attempt[0])
+            print(dependencies_str)
+            if best_attempt[1] is not None:
+                print("\n".join(best_attempt[1]))
+            else:
+                # Print the most recent attempt
+                print("\n".join(implementation_set))
+                pass
+            print(asserts_str)
+            breakpoint()
+        
+        # This is pretty similar to eval_result, so could probably be refactored
+        try:
+            implementation_attempt, best_attempt = collect_result(
+                scc, dependencies_str, defined_fns, asserts_str, pbar, executor, futures, best_attempt)
+            return implementation_attempt
+        except Exception as e:
+            print("Error:", e)
+        
+        # Note that the repetitiveness of kill_remaining_futures is intentional
+        # If we do it outside the loop, we have the unfortunate situation where
+        # sometimes we get stuck in the executor context, and the futures never get cancelled.
+        # I have no idea why this happens, but this is a workaround
+        handle_failure(scc, asserts_str, pbar, executor, futures, best_attempt)
 
 
 # Fill in functions which are called by the generated code but not defined
@@ -324,7 +383,7 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
     for implementation_set in implementation_sets:
         if remaining_attempts > 0:
             implementation_attempt, implementation_set, e, _ = eval_implementation(
-                implementation_set, dependencies_str, asserts_str, catch_name_exceptions=True)
+                implementation_set, dependencies_str, asserts_str)
             if implementation_attempt is None:
                 continue
             remaining_attempts -= 1
@@ -416,7 +475,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
         dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
-    
+
     num_completions = CONSTS["min_completions"] if "min_completions" in CONSTS else CONSTS["num_completions"]
     error = None
     # We exponentially increase the number of completions until we reach the max, "num_completions"
@@ -426,6 +485,8 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
             for fn_name in sccs[scc_idx]:
                 fn = defined_fns[fn_name]
                 fn.implement(codegen, num_completions=num_completions)
+                if generate_tests:
+                    fn.generate_tests(codegen, num_completions=num_completions)
             
             # We support a "sample only" mode, where we don't actually
             # implement the SCC, but just try to run inference.
@@ -493,7 +554,7 @@ def write_to_file(filename, defined_fns):
 # Decomposes them to their strongly connected components
 # And then implements each SCC in turn
 def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
-    sccs, scc_edges = strongly_connected_components(defined_fns)
+    sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not args.generate_tests)
     implemented_sccs = {}
     for scc_idx, _ in enumerate(sccs):
         implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
@@ -527,6 +588,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
     # Write the compiled program to a file
     write_to_file(target_file, defined_fns)
 
+
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("source_file", help="The program to parse")
@@ -538,6 +600,7 @@ if __name__ == "__main__":
     argparser.add_argument("-e", "--allow_expand", help="Allow autofill", action="store_true")
     argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
     argparser.add_argument("-b", "--best", help="Best", action="store_true")
+    argparser.add_argument("-g", "--generate_tests", help="Generate tests", action="store_true")
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
@@ -546,4 +609,7 @@ if __name__ == "__main__":
         debug = 'best'
     else:
         debug = args.debug
+    generate_tests = args.generate_tests
     parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug)
+else:
+    generate_tests = False
