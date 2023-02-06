@@ -145,11 +145,11 @@ def kill_remaining_futures(executor, futures):
 def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, executor, futures, best_attempt):
     implementation_set = best_attempt[1]
     asserts_passed = best_attempt[2]
-    error = None
+    error = best_attempt[3]
     print("Asserts passed:", len(asserts_passed))
     for assert_passed in asserts_passed:
         print("    ", assert_passed)
-    if error is not None and not args.generate_tests:
+    if error is not None and not generate_tests:
         if len(asserts_passed) > best_attempt[0]:
             best_attempt = (len(asserts_passed), implementation_set, asserts_passed)
         raise error
@@ -162,7 +162,7 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
     except:
         pass
     print("Successfully implemented", scc)
-    if args.generate_tests:
+    if generate_tests:
         # Clear out the asserts in the SCC
         for fn_name in scc:
             fn = defined_fns[fn_name]
@@ -184,7 +184,7 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
 
 
 # This is a helper function to keep track of the best attempts
-def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed):
+def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error):
     asserts_passed_hash = hash(tuple(sorted(asserts_passed)))
     if asserts_passed_hash not in all_attempts:
         all_found = {fn: [] for fn in scc}
@@ -196,14 +196,25 @@ def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed):
                     if comma_idx != -1:
                         assert_target = assert_target[:comma_idx].strip()
                     all_found[fn] += [assert_target]
-        if (len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())):
-            all_attempts[asserts_passed_hash] = (len(asserts_passed), implementation_set, asserts_passed)
+        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
+        if (not generate_tests) or found_successful_generation:
+            all_attempts[asserts_passed_hash] = (
+                len(asserts_passed),
+                implementation_set,
+                asserts_passed,
+                error
+            )
     else:
-        total_passed = len(asserts_passed) + all_attempts[asserts_passed_hash][0]
+        # We use the CodeT score if we're generating tests
+        if generate_tests:
+            total_passed = len(asserts_passed) + all_attempts[asserts_passed_hash][0]
+        else:
+            total_passed = len(asserts_passed)
         all_attempts[asserts_passed_hash] = (
             total_passed,
             all_attempts[asserts_passed_hash][1],
-            all_attempts[asserts_passed_hash][2]
+            all_attempts[asserts_passed_hash][2],
+            all_attempts[asserts_passed_hash][3]
         )
 
 
@@ -213,7 +224,7 @@ def eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_atte
 
     # If we got an error, check if we have a new best attempt
     if error is not None:
-        update_best_attempt(scc, all_attempts, implementation_set, asserts_passed)
+        update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error)
         raise error
 
     kill_remaining_futures(executor, futures)
@@ -474,7 +485,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
             for fn_name in sccs[scc_idx]:
                 fn = defined_fns[fn_name]
                 fn.implement(codegen, num_completions=num_completions)
-                if args.generate_tests:
+                if generate_tests:
                     fn.generate_tests(codegen, num_completions=num_completions)
             
             # We support a "sample only" mode, where we don't actually
@@ -577,6 +588,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
     # Write the compiled program to a file
     write_to_file(target_file, defined_fns)
 
+
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
     argparser.add_argument("source_file", help="The program to parse")
@@ -597,4 +609,7 @@ if __name__ == "__main__":
         debug = 'best'
     else:
         debug = args.debug
+    generate_tests = args.generate_tests
     parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug)
+else:
+    generate_tests = False
