@@ -8,7 +8,7 @@ In order to run this project, here are some example commands:
 
 In general, to configure Parsel for a new target programming, you'll need to create a new file in `consts/` and add it to `consts/__init__.py`. In addition, to use the OpenAI models, you'll need to create a `keys/codex_key.txt` file in the format `organization_id:api_key`.
 
-If you find this repo or the paper useful in your research, please feel free to cite our paper:
+If you find this repo or the paper useful in your research, please feel free to cite [our paper](https://arxiv.org/abs/2212.10561):
 ```
 @misc{zelikman2022parsel,
   url = {https://arxiv.org/abs/2212.10561},
