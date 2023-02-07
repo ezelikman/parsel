@@ -7,3 +7,16 @@ In order to run this project, here are some example commands:
 - To run `game_of_life_inverse_fill.ss` you will need to use the `-a` to autofill the program with functions that are called but not used.
 
 In general, to configure Parsel for a new target programming, you'll need to create a new file in `consts/` and add it to `consts/__init__.py`. In addition, to use the OpenAI models, you'll need to create a `keys/codex_key.txt` file in the format `organization_id:api_key`.
+
+If you find this repo or the paper useful in your research, please feel free to cite our paper:
+```
+@misc{zelikman2022parsel,
+  url = {https://arxiv.org/abs/2212.10561},
+  author = {Zelikman, Eric and Huang, Qian and Poesia, Gabriel and Goodman, Noah D and Haber, Nick},
+  keywords = {Computation and Language (cs.CL); Artificial Intelligence (cs.AI); Machine Learning (cs.LG)},
+  title = {Parsel 🐍: A (De-)compositional Framework for Algorithmic Reasoning with Language Models},
+  publisher = {arXiv},
+  year = {2022},
+  copyright = {arXiv.org perpetual, non-exclusive license}
+}
+```
