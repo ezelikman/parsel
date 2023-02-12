@@ -21,58 +21,59 @@ def base_case(num, cur_list):
 def recursion_rule(num, cur_list):
     cur_list.append(num)
     if num % 2 == 0:
-        return collatz_recursion(num // 2, cur_list)
+        return collatz_recursion(num / 2, cur_list)
     else:
         return collatz_recursion(3 * num + 1, cur_list)
 
 # Calls base_case if 1, otherwise recursion_rule
-def collatz_recursion(num, cur_list=list()):
-    if num == 1:
-        return base_case(num, cur_list)
+def collatz_recursion(num, cur_list=None):
+    if cur_list is None:
+        return collatz_recursion(num, [])
     else:
-        return recursion_rule(num, cur_list)
+        return base_case(num, cur_list) if num == 1 else recursion_rule(num, cur_list)
 
 
-assert [1] == collatz_recursion(1)
-assert collatz_recursion(3) == [3, 10, 5, 16, 8, 4, 2, 1], 'incorrect'
-assert collatz_recursion(1) == base_case(1, list())
-assert (collatz_recursion(3) == [3, 10, 5, 16, 8, 4, 2, 1])
-assert collatz_recursion(1, [1]) == [1, 1], 'First Call'
-assert collatz_recursion(5) == [5, 16, 8, 4, 2, 1]
-assert collatz_recursion(1) == [1], "Test 1 Failed"
-assert collatz_recursion(1) == [1]
-assert collatz_recursion(4) == [4, 2, 1]
-assert base_case(13, [0]) == [0, 13]
-assert base_case(2, [2]) == [2, 2]
-assert base_case(5, [1]) == [1, 5]
-assert base_case(1, []) == [1], 'error in base_case'
-assert base_case(3, []) == [3]
-assert base_case(1, []) == [1]
-assert base_case(10, [1, 2, 3]) == [1, 2, 3, 10], "base_case should return the list with the number appended to it."
-assert base_case(1, []) == [1], 'base_case is incorrect'
-assert base_case(5, [-1, 0, 1, 2]) == [-1, 0, 1, 2, 5]
-assert base_case(1, [0]) == [0,1], "base_case is incorrect: got {}, expected {}".format(base_case(1, [0]), [0,1])
-assert base_case(0, []) == [0]
-assert ( base_case(2, []) == [2] )
-assert base_case(0, []) == [0], "base_case failed"
-assert base_case(5, []) == [5], 'base_case test 1'
-assert base_case(1,[1]) == [1, 1], 'base_case is incorrect'
-assert base_case(2, []) == [2], "Test Failed"
-assert base_case(1, []) == [ 1 ]
-assert [1] == base_case(1, [])
-assert base_case(2,[]) == [2], f"base_case failed with input: {(2,[])}"
-assert [0] == base_case(0, [])
-assert base_case(1, [2, 3]) == [2, 3, 1]
 assert base_case(2, []) == [2]
-assert base_case(7, [3, 2, 1]) == [3, 2, 1, 7]
-assert (recursion_rule(2, [1]) == [1, 2, 1])
-assert recursion_rule(3, []) == [3, 10, 5, 16, 8, 4, 2, 1]
-assert collatz_recursion(2) == [2, 1]
-assert recursion_rule(2, list()) == [2, 1]
+assert base_case(1, []) == [1]
+assert base_case(0, []) == [0], "base_case incorrect"
+assert base_case(2, [1]) == [1, 2]
+assert base_case(10, [1, 2, 3]) == [1, 2, 3, 10]
+assert base_case(1, []) == [1],         "The base_case is incorrect"
+assert base_case(4, []) == [4]
+assert base_case(5, [2,2,2]) == [2,2,2,5]
+assert base_case(1, [0]) == [0, 1]
+assert base_case(0, []) == [0], 'base_case(0, []) should return [0]'
+assert base_case(1, [1]) == [1, 1]
+assert base_case(2, [1]) == [1, 2], "base_case is not correct"
+assert base_case(2, []) == [2], 'error1'
+assert base_case(1, [1, 2, 3]) == [1, 2, 3, 1]
+assert base_case(3, []) == [3]
+assert base_case(0, []) == [0]
+assert base_case(5, []) == [5]
+assert base_case(1, []) == [1], 'base_case is incorrect'
+assert base_case(5, [1,2,3,4]) == [1,2,3,4,5], 'base_case should return [1,2,3,4,5]'
 assert collatz_recursion(3) == [3, 10, 5, 16, 8, 4, 2, 1]
+assert collatz_recursion(1) == [1], "collatz_recursion is incorrect"
+assert collatz_recursion(1, [1]) == [1, 1]
+assert collatz_recursion(1) == [1], f"collatz_recursion(1) should return [1]"
+assert collatz_recursion(5) == [5, 16, 8, 4, 2, 1]
+assert collatz_recursion(2) == [2, 1]
+assert collatz_recursion(9) == [9, 28, 14, 7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]
+assert [1] == collatz_recursion(1)
 assert collatz_recursion(1) == [1]
-assert recursion_rule(15, []) == [15, 46, 23, 70, 35, 106, 53, 160, 80, 40, 20, 10, 5, 16, 8, 4, 2, 1], "recursion_rule returns incorrect results"
-assert recursion_rule(3, [1]) == [1, 3, 10, 5, 16, 8, 4, 2, 1]
+assert collatz_recursion(1, []) == [1]
 assert recursion_rule(5, []) == [5, 16, 8, 4, 2, 1]
-
-
+assert recursion_rule(5, []) == [5, 16, 8, 4, 2, 1], "recursion_rule incorrect"
+assert recursion_rule(3, [1]) == [1, 3, 10, 5, 16, 8, 4, 2, 1]
+assert recursion_rule(5, []) == [5, 16, 8, 4, 2, 1], 'incorrect recursion rule'
+assert recursion_rule(4, []) == [4, 2, 1]
+assert recursion_rule(2, []) == [2, 1], 'recursion_rule(2, []) should return [2, 1]'
+assert recursion_rule(3, []) == [3, 10, 5, 16, 8, 4, 2, 1]
+assert recursion_rule(3, []) == [3, 10, 5, 16, 8, 4, 2, 1] # odd
+assert recursion_rule(7, []) == [7, 22, 11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]
+assert recursion_rule(2, []) == [2, 1]
+assert recursion_rule(5, []) == [5, 16, 8, 4, 2, 1], 'recursion_rule does not work correctly'
+assert recursion_rule(6, []) == [6, 3, 10, 5, 16, 8, 4, 2, 1]
+assert recursion_rule(3, [1, 2]) == [1, 2, 3, 10, 5, 16, 8, 4, 2, 1]
+assert recursion_rule(2, [1]) == [1, 2, 1]
+assert recursion_rule(11, []) == [11, 34, 17, 52, 26, 13, 40, 20, 10, 5, 16, 8, 4, 2, 1]

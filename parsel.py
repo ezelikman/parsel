@@ -1,6 +1,7 @@
 import argparse
 from codex import CodeGen
 from graph import get_graph, strongly_connected_components, get_root
+from parsify import add_fn_name_and_args
 import itertools
 from fn import get_function_from_examples, find_str
 import concurrent.futures
@@ -79,7 +80,7 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
         
         # Add the assert to the code to execute
         exec_implementation_attempt += assert_str
-
+        
         if verbose:
             print("--------")
             print(CONSTS["exec_pre"])
@@ -180,41 +181,40 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         if fn.fixed_implementation is None:
             fn.fix_implementation(implementation)
     implementation_attempt = to_implementation_str(implementation_set, dependencies_str) + "\n" + "\n".join(asserts_passed)
-    return implementation_attempt,best_attempt
+    return implementation_attempt, best_attempt
 
 
 # This is a helper function to keep track of the best attempts
 def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error):
     asserts_passed_hash = hash(tuple(sorted(asserts_passed)))
-    if asserts_passed_hash not in all_attempts:
-        all_found = {fn: [] for fn in scc}
-        for fn in scc:
-            for assert_passed in asserts_passed:
-                if fn in assert_passed:
-                    assert_target = assert_passed.split("==")[-1].strip()
-                    comma_idx = find_str(assert_target, ",")
-                    if comma_idx != -1:
-                        assert_target = assert_target[:comma_idx].strip()
-                    all_found[fn] += [assert_target]
-        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
-        if (not generate_tests) or found_successful_generation:
-            all_attempts[asserts_passed_hash] = (
-                len(asserts_passed),
-                implementation_set,
-                asserts_passed,
-                error
-            )
-    else:
-        # We use the CodeT score if we're generating tests
+    all_found = {fn: [] for fn in scc}
+    for fn in scc:
+        for assert_passed in asserts_passed:
+            if fn in assert_passed:
+                if generate_tests:
+                    assert_passed = CONSTS['simplify_assert'](assert_passed)
+                assert_target = assert_passed.split("==")[-1].strip()
+                comma_idx = find_str(assert_target, ",")
+                if comma_idx != -1:
+                    assert_target = assert_target[:comma_idx].strip()
+                all_found[fn] += [assert_target]
+    found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
+    min_found = min(len(found) for found in all_found.values())
+    if found_successful_generation:
         if generate_tests:
-            total_passed = len(asserts_passed) + all_attempts[asserts_passed_hash][0]
+            score = min_found
+            if asserts_passed_hash in all_attempts:
+                score += all_attempts[asserts_passed_hash][0]
+                implementation_set = all_attempts[asserts_passed_hash][1]
+                asserts_passed = all_attempts[asserts_passed_hash][2]
+                error = all_attempts[asserts_passed_hash][3]
         else:
-            total_passed = len(asserts_passed)
+            score = len(asserts_passed)
         all_attempts[asserts_passed_hash] = (
-            total_passed,
-            all_attempts[asserts_passed_hash][1],
-            all_attempts[asserts_passed_hash][2],
-            all_attempts[asserts_passed_hash][3]
+            score,
+            implementation_set,
+            asserts_passed,
+            error
         )
 
 
@@ -486,7 +486,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
                 fn = defined_fns[fn_name]
                 fn.implement(codegen, num_completions=num_completions)
                 if generate_tests:
-                    fn.generate_tests(codegen, num_completions=num_completions)
+                    fn.generate_tests(codegen, num_completions=num_completions * 2)
             
             # We support a "sample only" mode, where we don't actually
             # implement the SCC, but just try to run inference.
@@ -542,6 +542,14 @@ def write_to_file(filename, defined_fns):
     root = get_root(defined_fns)
     fn_defs = fns_to_str(defined_fns[root], set())
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
+    if generate_tests:
+        # Remove duplicate asserts but keep the order
+        asserts_dict = {}
+        for assert_fn in asserts.split("\n"):
+            if assert_fn.strip() == "":
+                continue
+            asserts_dict[assert_fn] = True
+        asserts = "\n".join(list(asserts_dict.keys()))
     assert CONSTS['exist_asserts'](asserts)
     exec_pre = CONSTS['exec_pre']
     contents = f"{exec_pre}{fn_defs}\n{asserts}"
@@ -554,14 +562,14 @@ def write_to_file(filename, defined_fns):
 # Decomposes them to their strongly connected components
 # And then implements each SCC in turn
 def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
-    sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not args.generate_tests)
+    sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not generate_tests)
     implemented_sccs = {}
     for scc_idx, _ in enumerate(sccs):
         implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
     return defined_fns
 
 # Used to parse a Parsel file to a target language
-def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False):
+def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
         target_file = source_file.split(".")[0] + CONSTS['extension']
@@ -575,6 +583,11 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
         program = program[program.index("#*#*#\n") + 1:]
     else:
         header = []
+
+    if add_name_and_args:
+        if "\\" in program[0]:
+            print("Warning: multiline function descriptions are not fully supported with add_name_and_args")
+        program = add_fn_name_and_args(program, codegen)
 
     # Parse the program into a graph of functions
     # And add the header to each function
@@ -601,6 +614,7 @@ if __name__ == "__main__":
     argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
     argparser.add_argument("-b", "--best", help="Best", action="store_true")
     argparser.add_argument("-g", "--generate_tests", help="Generate tests", action="store_true")
+    argparser.add_argument("-n", "--add_name_and_args", help="Add name and args", action="store_true")
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
@@ -610,6 +624,6 @@ if __name__ == "__main__":
     else:
         debug = args.debug
     generate_tests = args.generate_tests
-    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug)
+    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug, add_name_and_args=args.add_name_and_args)
 else:
     generate_tests = False
