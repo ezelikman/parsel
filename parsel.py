@@ -198,12 +198,19 @@ def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, e
                 if comma_idx != -1:
                     assert_target = assert_target[:comma_idx].strip()
                 all_found[fn] += [assert_target]
-    found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
+    if generate_tests:
+        # If we're generating tests, we need to make sure that we've found at least two different values for each function
+        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) >= 2 for found in all_found.values())
+    else:
+        # If we're not generating tests and we get here, we've found a successful implementation
+        found_successful_generation = True
     min_found = min(len(found) for found in all_found.values())
     if found_successful_generation:
         if generate_tests:
             score = min_found
             if asserts_passed_hash in all_attempts:
+                # Inspired by the CodeT approach, we evaluate based on the product of |implementations| and |asserts|
+                # We do this for the least-tested function in the SCC
                 score += all_attempts[asserts_passed_hash][0]
                 implementation_set = all_attempts[asserts_passed_hash][1]
                 asserts_passed = all_attempts[asserts_passed_hash][2]
