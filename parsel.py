@@ -13,6 +13,7 @@ from consts import CONSTS, mode
 import os
 import ast
 
+
 # When a function is called but not defined, we can try to
 # infer its implementation from the other functions in the
 # same SCC.
@@ -56,7 +57,8 @@ def to_implementation_str(implementation_set, dependencies_str):
 
 # Try to fill in the implementation of a set of functions in an SCC
 def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, best_attempt=0):
-    implementation_attempt = to_implementation_str(implementation_set, dependencies_str)
+    implementation_attempt = to_implementation_str(
+        implementation_set, dependencies_str)
     asserts_passed = []
     failure = None
     attempted = 0
@@ -68,19 +70,20 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     # where multiple constraints can't be applied at once
     for assert_str in asserts_str.splitlines():
         # We do still give up if we've already done better than this attempt
-        if (len(asserts_str.splitlines()) - attempted < best_attempt) or (CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
+        if (len(asserts_str.splitlines()) - attempted < best_attempt) or (
+                CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
             failure = Exception("Already beat this attempt")
             break
-        
+
         # Construct the code to execute
         exec_implementation_attempt = implementation_attempt
         if verbose:
             assert_in = CONSTS["get_assert_in"](assert_str)
             exec_implementation_attempt += CONSTS["output_fn"].format(output_str=assert_in)
-        
+
         # Add the assert to the code to execute
         exec_implementation_attempt += assert_str
-        
+
         if verbose:
             print("--------")
             print(CONSTS["exec_pre"])
@@ -105,8 +108,8 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
         else:
             return None, implementation_set, failure, asserts_passed
 
-    # Otherwise, let's keep track of the asserts so that the final implementation
-    # Has access to them
+    # Otherwise, let's keep track of the asserts so that the final
+    # Implementation has access to them
     implementation_attempt += asserts_str
     return implementation_attempt, implementation_set, None, asserts_passed
 
@@ -120,7 +123,7 @@ def kill_remaining_futures(executor, futures):
         executor.shutdown(wait=False, cancel_futures=True)
     except:
         pass
-    
+
     # Attempt 2
     for future in futures:
         try:
@@ -128,7 +131,7 @@ def kill_remaining_futures(executor, futures):
                 future.result(timeout=0)
         except:
             pass
-    
+
     # Attempt 3
     try:
         for work_item in executor._pending_work_items.values():
@@ -152,7 +155,8 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         print("    ", assert_passed)
     if error is not None and not generate_tests:
         if len(asserts_passed) > best_attempt[0]:
-            best_attempt = (len(asserts_passed), implementation_set, asserts_passed)
+            best_attempt = (
+                len(asserts_passed), implementation_set, asserts_passed)
         raise error
     try:
         kill_remaining_futures(executor, futures)
@@ -172,7 +176,7 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         new_fns = {dict_key: dict_value for dict_key, dict_value in defined_fns.items() if dict_key in scc}
         root = get_root(new_fns)
         defined_fns[root].asserts = [assert_passed.replace("assert", "", 1).strip() for assert_passed in asserts_passed]
-                    
+
     if CONSTS['eval_mode']:
         with open(CONSTS['eval_filename'], "a+") as f:
             f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
@@ -253,6 +257,7 @@ def eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_atte
             fn.fix_implementation(implementation)
     return implementation_set,implementation_attempt
 
+
 # If we fail to implement an SCC, we need to kill all the remaining futures and clean up
 def handle_failure(scc, asserts_str, pbar, executor, futures, best_attempt):
     kill_remaining_futures(executor, futures)
@@ -278,7 +283,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         verbose = True
     else:
         verbose = False
-    implementation_set_keys =  all_implementations.keys()
+    implementation_set_keys = all_implementations.keys()
     random.seed(seed)
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     # We save memory by only storing the index of the implementation in all_implementation_sets
@@ -347,7 +352,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
             # If we have submitted all the futures we want to submit, break
             if submitted == n_to_try:
                 break
-        
+
         # When we have exhausted all the implementation sets, we can try reattempting the best attempt
         # If we are debugging, even in 'best' mode, we want to stop at this point
         if len(all_attempts) == 0:
@@ -366,7 +371,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                 pass
             print(asserts_str)
             breakpoint()
-        
+
         # This is pretty similar to eval_result, so could probably be refactored
         try:
             implementation_attempt, best_attempt = collect_result(
@@ -401,10 +406,14 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-# If we're in VirtualHome mode, we keep track of different kinds of recursion depth to avoid infinite loops
+
+# If we're in VirtualHome mode, we keep track of different kinds
+# of recursion depth to avoid infinite loops
 if mode == 'vh':
     force_expand_counter = 0
     max_expand_counter = 2
+
+
 def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.5, debug=False, seed=42, backtrack=False):
     if 'timeout' in CONSTS:
         timeout = CONSTS['timeout']
@@ -454,6 +463,7 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout, debug=debug, seed=seed, backtrack=backtrack)
     raise RuntimeError(f"No implementation found for {scc}")
 
+
 # Evaluate all the combinations of possible
 # implementations of the functions in the SCC
 def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, seed=42, backtrack=False):
@@ -466,6 +476,7 @@ def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, 
     return attempt_implementations(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug, seed=seed, backtrack=backtrack)
 
+
 # Clear the implementations of all the functions in the SCC
 def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
     for edge in scc_edges[scc_idx]:
@@ -473,6 +484,7 @@ def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, 
     for fn_name in sccs[scc_idx]:
         fn = defined_fns[fn_name]
         fn.fixed_implementation = None
+
 
 # Implement the SCC and return the string
 def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, seed=42, backtrack=False):
@@ -494,7 +506,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
                 fn.implement(codegen, num_completions=num_completions)
                 if generate_tests:
                     fn.generate_tests(codegen, num_completions=num_completions * 2)
-            
+
             # We support a "sample only" mode, where we don't actually
             # implement the SCC, but just try to run inference.
             # This let's us parallelize inference and implementation.
@@ -524,6 +536,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
         return new_str
     raise error
 
+
 # Convert a function to its string representation
 # Including all its children
 # Note that this assumes that functions need to be defined
@@ -540,6 +553,7 @@ def fns_to_str(fn, written):
         total_str += fns_to_str(child, written)
     return total_str + CONSTS['full_fn_str'].format(
         desc=fn.desc, fn_impl=fn.fixed_implementation)
+
 
 # Figure out which function is the root of the graph
 # And then write a file with all the functions,
@@ -565,6 +579,7 @@ def write_to_file(filename, defined_fns):
         f.write(contents)
     print("Done writing to " + str(filename))
 
+
 # The key function of the program, which takes a function graph
 # Decomposes them to their strongly connected components
 # And then implements each SCC in turn
@@ -574,6 +589,7 @@ def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False
     for scc_idx, _ in enumerate(sccs):
         implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
     return defined_fns
+
 
 # Used to parse a Parsel file to a target language
 def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False):
@@ -604,7 +620,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
 
     # Compile the graph into a target language
     defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand, debug)
-    
+
     # Write the compiled program to a file
     write_to_file(target_file, defined_fns)
 
