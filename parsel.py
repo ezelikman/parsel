@@ -1,6 +1,7 @@
 import argparse
 from codex import CodeGen
 from graph import get_graph, strongly_connected_components, get_root
+from parsify import add_fn_name_and_args
 import itertools
 from fn import get_function_from_examples, find_str
 import concurrent.futures
@@ -11,6 +12,7 @@ import time
 from consts import CONSTS, mode
 import os
 import ast
+
 
 # When a function is called but not defined, we can try to
 # infer its implementation from the other functions in the
@@ -55,7 +57,8 @@ def to_implementation_str(implementation_set, dependencies_str):
 
 # Try to fill in the implementation of a set of functions in an SCC
 def eval_implementation(implementation_set, dependencies_str, asserts_str, verbose=True, best_attempt=0):
-    implementation_attempt = to_implementation_str(implementation_set, dependencies_str)
+    implementation_attempt = to_implementation_str(
+        implementation_set, dependencies_str)
     asserts_passed = []
     failure = None
     attempted = 0
@@ -67,16 +70,17 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
     # where multiple constraints can't be applied at once
     for assert_str in asserts_str.splitlines():
         # We do still give up if we've already done better than this attempt
-        if (len(asserts_str.splitlines()) - attempted < best_attempt) or (CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
+        if (len(asserts_str.splitlines()) - attempted < best_attempt) or (
+                CONSTS['strict_mode'] and (len(asserts_passed) != attempted)):
             failure = Exception("Already beat this attempt")
             break
-        
+
         # Construct the code to execute
         exec_implementation_attempt = implementation_attempt
         if verbose:
             assert_in = CONSTS["get_assert_in"](assert_str)
             exec_implementation_attempt += CONSTS["output_fn"].format(output_str=assert_in)
-        
+
         # Add the assert to the code to execute
         exec_implementation_attempt += assert_str
 
@@ -104,8 +108,8 @@ def eval_implementation(implementation_set, dependencies_str, asserts_str, verbo
         else:
             return None, implementation_set, failure, asserts_passed
 
-    # Otherwise, let's keep track of the asserts so that the final implementation
-    # Has access to them
+    # Otherwise, let's keep track of the asserts so that the final
+    # Implementation has access to them
     implementation_attempt += asserts_str
     return implementation_attempt, implementation_set, None, asserts_passed
 
@@ -119,7 +123,7 @@ def kill_remaining_futures(executor, futures):
         executor.shutdown(wait=False, cancel_futures=True)
     except:
         pass
-    
+
     # Attempt 2
     for future in futures:
         try:
@@ -127,7 +131,7 @@ def kill_remaining_futures(executor, futures):
                 future.result(timeout=0)
         except:
             pass
-    
+
     # Attempt 3
     try:
         for work_item in executor._pending_work_items.values():
@@ -151,7 +155,8 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         print("    ", assert_passed)
     if error is not None and not generate_tests:
         if len(asserts_passed) > best_attempt[0]:
-            best_attempt = (len(asserts_passed), implementation_set, asserts_passed)
+            best_attempt = (
+                len(asserts_passed), implementation_set, asserts_passed)
         raise error
     try:
         kill_remaining_futures(executor, futures)
@@ -171,7 +176,7 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         new_fns = {dict_key: dict_value for dict_key, dict_value in defined_fns.items() if dict_key in scc}
         root = get_root(new_fns)
         defined_fns[root].asserts = [assert_passed.replace("assert", "", 1).strip() for assert_passed in asserts_passed]
-                    
+
     if CONSTS['eval_mode']:
         with open(CONSTS['eval_filename'], "a+") as f:
             f.write(f", {len(asserts_str.splitlines())} / {len(asserts_str.splitlines())}")
@@ -180,41 +185,47 @@ def collect_result(scc, dependencies_str, defined_fns, asserts_str, pbar, execut
         if fn.fixed_implementation is None:
             fn.fix_implementation(implementation)
     implementation_attempt = to_implementation_str(implementation_set, dependencies_str) + "\n" + "\n".join(asserts_passed)
-    return implementation_attempt,best_attempt
+    return implementation_attempt, best_attempt
 
 
 # This is a helper function to keep track of the best attempts
 def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, error):
     asserts_passed_hash = hash(tuple(sorted(asserts_passed)))
-    if asserts_passed_hash not in all_attempts:
-        all_found = {fn: [] for fn in scc}
-        for fn in scc:
-            for assert_passed in asserts_passed:
-                if fn in assert_passed:
-                    assert_target = assert_passed.split("==")[-1].strip()
-                    comma_idx = find_str(assert_target, ",")
-                    if comma_idx != -1:
-                        assert_target = assert_target[:comma_idx].strip()
-                    all_found[fn] += [assert_target]
-        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) > 1 for found in all_found.values())
-        if (not generate_tests) or found_successful_generation:
-            all_attempts[asserts_passed_hash] = (
-                len(asserts_passed),
-                implementation_set,
-                asserts_passed,
-                error
-            )
+    all_found = {fn: [] for fn in scc}
+    for fn in scc:
+        for assert_passed in asserts_passed:
+            if fn in assert_passed:
+                if generate_tests:
+                    assert_passed = CONSTS['simplify_assert'](assert_passed)
+                assert_target = assert_passed.split("==")[-1].strip()
+                comma_idx = find_str(assert_target, ",")
+                if comma_idx != -1:
+                    assert_target = assert_target[:comma_idx].strip()
+                all_found[fn] += [assert_target]
+    if generate_tests:
+        # If we're generating tests, we need to make sure that we've found at least two different values for each function
+        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) >= 2 for found in all_found.values())
     else:
-        # We use the CodeT score if we're generating tests
+        # If we're not generating tests and we get here, we've found a successful implementation
+        found_successful_generation = True
+    min_found = min(len(found) for found in all_found.values())
+    if found_successful_generation:
         if generate_tests:
-            total_passed = len(asserts_passed) + all_attempts[asserts_passed_hash][0]
+            score = min_found
+            if asserts_passed_hash in all_attempts:
+                # Inspired by the CodeT approach, we evaluate based on the product of |implementations| and |asserts|
+                # We do this for the least-tested function in the SCC
+                score += all_attempts[asserts_passed_hash][0]
+                implementation_set = all_attempts[asserts_passed_hash][1]
+                asserts_passed = all_attempts[asserts_passed_hash][2]
+                error = all_attempts[asserts_passed_hash][3]
         else:
-            total_passed = len(asserts_passed)
+            score = len(asserts_passed)
         all_attempts[asserts_passed_hash] = (
-            total_passed,
-            all_attempts[asserts_passed_hash][1],
-            all_attempts[asserts_passed_hash][2],
-            all_attempts[asserts_passed_hash][3]
+            score,
+            implementation_set,
+            asserts_passed,
+            error
         )
 
 
@@ -246,6 +257,7 @@ def eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_atte
             fn.fix_implementation(implementation)
     return implementation_set,implementation_attempt
 
+
 # If we fail to implement an SCC, we need to kill all the remaining futures and clean up
 def handle_failure(scc, asserts_str, pbar, executor, futures, best_attempt):
     kill_remaining_futures(executor, futures)
@@ -271,7 +283,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         verbose = True
     else:
         verbose = False
-    implementation_set_keys =  all_implementations.keys()
+    implementation_set_keys = all_implementations.keys()
     random.seed(seed)
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     # We save memory by only storing the index of the implementation in all_implementation_sets
@@ -340,7 +352,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
             # If we have submitted all the futures we want to submit, break
             if submitted == n_to_try:
                 break
-        
+
         # When we have exhausted all the implementation sets, we can try reattempting the best attempt
         # If we are debugging, even in 'best' mode, we want to stop at this point
         if len(all_attempts) == 0:
@@ -359,7 +371,7 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
                 pass
             print(asserts_str)
             breakpoint()
-        
+
         # This is pretty similar to eval_result, so could probably be refactored
         try:
             implementation_attempt, best_attempt = collect_result(
@@ -394,10 +406,14 @@ def autofill(scc, dependencies_str, defined_fns, all_implementations, asserts_st
             if new_implementation_attempt is not None:
                 return new_implementation_attempt
 
-# If we're in VirtualHome mode, we keep track of different kinds of recursion depth to avoid infinite loops
+
+# If we're in VirtualHome mode, we keep track of different kinds
+# of recursion depth to avoid infinite loops
 if mode == 'vh':
     force_expand_counter = 0
     max_expand_counter = 2
+
+
 def attempt_implementations(scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=5, timeout=0.5, debug=False, seed=42, backtrack=False):
     if 'timeout' in CONSTS:
         timeout = CONSTS['timeout']
@@ -447,6 +463,7 @@ def attempt_implementations(scc, dependencies_str, defined_fns, all_implementati
             new_scc, dependencies_str, defined_fns, new_implementations, asserts_str, codegen, should_fill_in_missing=False, should_expand=False, remaining_attempts=remaining_attempts, timeout=timeout, debug=debug, seed=seed, backtrack=backtrack)
     raise RuntimeError(f"No implementation found for {scc}")
 
+
 # Evaluate all the combinations of possible
 # implementations of the functions in the SCC
 def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, seed=42, backtrack=False):
@@ -459,6 +476,7 @@ def eval_scc(scc, dependencies_str, defined_fns, codegen, allow_autofill=False, 
     return attempt_implementations(
         scc, dependencies_str, defined_fns, all_implementations, asserts_str, codegen, should_fill_in_missing=allow_autofill, should_expand=should_expand, debug=debug, seed=seed, backtrack=backtrack)
 
+
 # Clear the implementations of all the functions in the SCC
 def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False):
     for edge in scc_edges[scc_idx]:
@@ -466,6 +484,7 @@ def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, 
     for fn_name in sccs[scc_idx]:
         fn = defined_fns[fn_name]
         fn.fixed_implementation = None
+
 
 # Implement the SCC and return the string
 def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, seed=42, backtrack=False):
@@ -486,8 +505,8 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
                 fn = defined_fns[fn_name]
                 fn.implement(codegen, num_completions=num_completions)
                 if generate_tests:
-                    fn.generate_tests(codegen, num_completions=num_completions)
-            
+                    fn.generate_tests(codegen, num_completions=num_completions * 2)
+
             # We support a "sample only" mode, where we don't actually
             # implement the SCC, but just try to run inference.
             # This let's us parallelize inference and implementation.
@@ -517,6 +536,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
         return new_str
     raise error
 
+
 # Convert a function to its string representation
 # Including all its children
 # Note that this assumes that functions need to be defined
@@ -534,6 +554,7 @@ def fns_to_str(fn, written):
     return total_str + CONSTS['full_fn_str'].format(
         desc=fn.desc, fn_impl=fn.fixed_implementation)
 
+
 # Figure out which function is the root of the graph
 # And then write a file with all the functions,
 # Generated from the graph
@@ -542,6 +563,14 @@ def write_to_file(filename, defined_fns):
     root = get_root(defined_fns)
     fn_defs = fns_to_str(defined_fns[root], set())
     asserts = "\n".join(fn.get_assert_str() for fn in defined_fns.values())
+    if generate_tests:
+        # Remove duplicate asserts but keep the order
+        asserts_dict = {}
+        for assert_fn in asserts.split("\n"):
+            if assert_fn.strip() == "":
+                continue
+            asserts_dict[assert_fn] = True
+        asserts = "\n".join(list(asserts_dict.keys()))
     assert CONSTS['exist_asserts'](asserts)
     exec_pre = CONSTS['exec_pre']
     contents = f"{exec_pre}{fn_defs}\n{asserts}"
@@ -550,18 +579,20 @@ def write_to_file(filename, defined_fns):
         f.write(contents)
     print("Done writing to " + str(filename))
 
+
 # The key function of the program, which takes a function graph
 # Decomposes them to their strongly connected components
 # And then implements each SCC in turn
 def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
-    sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not args.generate_tests)
+    sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not generate_tests)
     implemented_sccs = {}
     for scc_idx, _ in enumerate(sccs):
         implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
     return defined_fns
 
+
 # Used to parse a Parsel file to a target language
-def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False):
+def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
         target_file = source_file.split(".")[0] + CONSTS['extension']
@@ -576,6 +607,11 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
     else:
         header = []
 
+    if add_name_and_args:
+        if "\\" in program[0]:
+            print("Warning: multiline function descriptions are not fully supported with add_name_and_args")
+        program = add_fn_name_and_args(program, codegen)
+
     # Parse the program into a graph of functions
     # And add the header to each function
     _, defined_fns = get_graph(program)
@@ -584,7 +620,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
 
     # Compile the graph into a target language
     defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand, debug)
-    
+
     # Write the compiled program to a file
     write_to_file(target_file, defined_fns)
 
@@ -601,6 +637,7 @@ if __name__ == "__main__":
     argparser.add_argument("-d", "--debug", help="Debug", action="store_true")
     argparser.add_argument("-b", "--best", help="Best", action="store_true")
     argparser.add_argument("-g", "--generate_tests", help="Generate tests", action="store_true")
+    argparser.add_argument("-n", "--add_name_and_args", help="Add name and args", action="store_true")
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
@@ -610,6 +647,6 @@ if __name__ == "__main__":
     else:
         debug = args.debug
     generate_tests = args.generate_tests
-    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug)
+    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug, add_name_and_args=args.add_name_and_args)
 else:
     generate_tests = False

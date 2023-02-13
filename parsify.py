@@ -97,3 +97,40 @@ def to_parsel(solution):
   defined_functions = get_defs(solution)
   basic_graph = get_fns(solution, defined_functions)
   return basic_graph
+
+def add_fn_name_and_args(parsel_text, codegen, max_tokens=500):
+  parsel_lines = [line.rstrip() for line in parsel_text if line.strip() != ""]
+  is_assert_lines = [CONSTS['assert_check'](line) for line in parsel_lines]
+  assert_lines = [line for line, is_assert in zip(parsel_lines, is_assert_lines) if is_assert]
+  parsel_lines = [parsel_line for parsel_line, assert_line in zip(parsel_lines, is_assert_lines) if not assert_line]
+  parsel_text = '\n'.join(parsel_lines)
+  prompt = CONSTS["add_name_and_args"](parsel_text)
+  added_args = codegen.generate(
+    codex_in=prompt,
+    num_completions=8,
+    max_tokens=max_tokens,
+    temperature=0.2,
+    stop=["\n\n"],
+    indented=False,
+    indented_after_first_line=True,
+    require=None,
+    cache_key=None,
+  )
+  for added_arg in added_args:
+    # get the non-empty lines
+    added_arg = [line.strip() for line in added_arg if line.strip() != ""]
+    print("Added args:", added_arg)
+    # zip the lines together
+    new_parsel = []
+    if len(added_arg) != len(parsel_lines):
+      continue
+    for name_and_args, line in zip(added_arg, parsel_lines):
+      indentation = len(line) - len(line.lstrip())
+      new_parsel.append(" " * indentation + name_and_args + ": " + line.strip())
+    final_parsel = []
+    for is_assert in is_assert_lines:
+      if is_assert:
+        final_parsel.append(assert_lines.pop(0))
+      else:
+        final_parsel.append(new_parsel.pop(0))
+    return final_parsel
