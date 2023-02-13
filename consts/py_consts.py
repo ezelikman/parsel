@@ -50,7 +50,7 @@ Calls base_case if 1, otherwise recursion_rule
     Add num to list, collatz with 3n + 1 if odd or n / 2 if even
         Calls base_case if 1, otherwise recursion_rule
 ------>
-collatz_recursion(num, cur_list=list())
+collatz_recursion(num, cur_list=None)
     base_case(num, cur_list)
     recursion_rule(num, cur_list)
         collatz_recursion

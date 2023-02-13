@@ -100,6 +100,9 @@ def to_parsel(solution):
 
 def add_fn_name_and_args(parsel_text, codegen, max_tokens=500):
   parsel_lines = [line.rstrip() for line in parsel_text if line.strip() != ""]
+  is_assert_lines = [CONSTS['assert_check'](line) for line in parsel_lines]
+  assert_lines = [line for line, is_assert in zip(parsel_lines, is_assert_lines) if is_assert]
+  parsel_lines = [parsel_line for parsel_line, assert_line in zip(parsel_lines, is_assert_lines) if not assert_line]
   parsel_text = '\n'.join(parsel_lines)
   prompt = CONSTS["add_name_and_args"](parsel_text)
   added_args = codegen.generate(
@@ -124,4 +127,10 @@ def add_fn_name_and_args(parsel_text, codegen, max_tokens=500):
     for name_and_args, line in zip(added_arg, parsel_lines):
       indentation = len(line) - len(line.lstrip())
       new_parsel.append(" " * indentation + name_and_args + ": " + line.strip())
-    return new_parsel
+    final_parsel = []
+    for is_assert in is_assert_lines:
+      if is_assert:
+        final_parsel.append(assert_lines.pop(0))
+      else:
+        final_parsel.append(new_parsel.pop(0))
+    return final_parsel
