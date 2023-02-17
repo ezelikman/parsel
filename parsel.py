@@ -595,7 +595,7 @@ def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False
 def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
-        target_file = source_file.split(".")[0] + CONSTS['extension']
+        target_file = os.path.splitext(source_file)[0] + CONSTS['extension']
     # Load the program to be parsed
     with open(source_file, "r") as f:
         program = f.readlines()
