@@ -38,18 +38,27 @@ def main(problem, debug=False, sample_only=False):
       try:
         if problem != -1 and int(folder) != problem:
           continue
+        if not sample_only:
+          if os.path.exists(CONSTS['eval_filename']):
+            # first check if the problem number is already at the start of some line in the file
+            with open(CONSTS['eval_filename'], "r") as f:
+              for line in f.readlines():
+                if line.startswith(str(folder)): #and (len(line.split(",")) == CONSTS['max_text_completions'] + 1):
+                  exit()
+          with open(CONSTS['eval_filename'], "a+") as f:
+            f.write("\n" + str(folder))
       except:
         continue
 
       cur_asserts = ["-> executable"]
-      save_file = os.path.join("vh_generated", f'eval_{mode}_{folder}.ss')
+      save_file = os.path.join("vh_generated4", f'eval_{mode}_{folder}.ss')
       question = question + "\n"
       cur_prompt = direct_prompt if direct else prompt
-      print(prefix_prefix + question + cur_prompt)
+      # print(cur_prompt + prefix_prefix + question + "\"\"\"\n")
       sketch_solutions = codegen.generate(
         model_name=CONSTS['text_model_name'],
         rate_limit_tokens=CONSTS['rate_limit_tokens_text'],
-        codex_in=prefix_prefix + question + cur_prompt,
+        codex_in=cur_prompt + prefix_prefix + question + "\"\"\"\n",
         num_completions=CONSTS['num_text_completions'],
         temperature=0.6,
         indented=False,
@@ -57,7 +66,7 @@ def main(problem, debug=False, sample_only=False):
         logit_bias={"4299": -100}
       )
       n_valid_translations = 0
-      for sketch_solution in sketch_solutions:
+      for sketch_solution_idx, sketch_solution in enumerate(sketch_solutions):
         if n_valid_translations >= CONSTS['max_text_completions']:
           break
         if direct:
@@ -101,6 +110,9 @@ def main(problem, debug=False, sample_only=False):
                 new_solution.append(line)
               else:
                 break
+            if not attempt_solution[0].startswith("task_plan():") or len(attempt_solution) == 1:
+              translated_solutions = consider_more_solutions(translated_solutions, translation_attempt_idx, question, parsel_solution)
+              continue
             attempt_solution = new_solution
             root, defined_fns = get_graph(attempt_solution)
             if len(defined_fns) > 7:
@@ -114,15 +126,15 @@ def main(problem, debug=False, sample_only=False):
               n_valid_translations += 1
             root.asserts = cur_asserts
             for fn in defined_fns.values():
-              fn.prefix = "\"\"\"An action plan is a list of strings that describes a sequence of steps to accomplish a task, To be correctly parsed, an action plan must be syntactically correct and contain only allowed actions and recognizable simple objects. Allowed actions: 'close' <arg1>, 'cut' <arg1>, 'drink' <arg1>, 'drop' <arg1>, 'eat' <arg1>, 'find' <arg1>, 'grab' <arg1>, 'greet' <arg1>, 'lie on' <arg1>, 'look at' <arg1>, 'open' <arg1>, 'plug in' <arg1>, 'plug out' <arg1>, 'point at' <arg1>, 'pour' <arg1> 'into' <arg2>, 'pull' <arg1>, 'push' <arg1>, 'put' <arg1> 'on' <arg2>, 'put' <arg1> 'in' <arg2>, 'put back' <arg1>, 'take off' <arg1>, 'put on' <arg1>, 'read' <arg1>, 'release', 'rinse' <arg1>, 'run to'  <arg1>, 'scrub' <arg1>, 'sit on' <arg1>, 'sleep', 'squeeze' <arg1>, 'stand up', 'switch off' <arg1>, 'switch on' <arg1>, 'touch' <arg1>, 'turn to' <arg1>, 'type on' <arg1>, 'wake up', 'walk to' <arg1>, 'wash' <arg1>, 'watch' <arg1>, 'wipe' <arg1>. To satisfy the common-sense constraints, each action step in this action plan must not violate the set of its pre-conditions (e.g. the agent cannot grab milk from the fridge before opening it) and post-conditions (e.g. the state of the fridge changes from \“closed\” to \“open\” after the agent opens it).\"\"\"\n"
+              fn.prefix = "\"\"\"An action plan is a list of strings that describes a sequence of steps to accomplish a task, To be correctly parsed, an action plan must be syntactically correct and contain only allowed actions and recognizable simple objects. Allowed actions: 'close' <arg1>, 'cut' <arg1>, 'drink' <arg1>, 'drop' <arg1>, 'eat' <arg1>, 'find' <arg1>, 'grab' <arg1>, 'greet' <arg1>, 'lie on' <arg1>, 'look at' <arg1>, 'open' <arg1>, 'plug in' <arg1>, 'plug out' <arg1>, 'point at' <arg1>, 'pour' <arg1> 'into' <arg2>, 'pull' <arg1>, 'push' <arg1>, 'put' <arg1> 'on' <arg2>, 'put' <arg1> 'in' <arg2>, 'put back' <arg1>, 'take off' <arg1>, 'put on' <arg1>, 'read' <arg1>, 'release' <arg1>, 'rinse' <arg1>, 'run to'  <arg1>, 'scrub' <arg1>, 'sit on' <arg1>, 'sleep', 'squeeze' <arg1>, 'stand up', 'switch off' <arg1>, 'switch on' <arg1>, 'touch' <arg1>, 'turn to' <arg1>, 'type on' <arg1>, 'wake up', 'walk to' <arg1>, 'wash' <arg1>, 'watch' <arg1>, 'wipe' <arg1>. To satisfy the common-sense constraints, each action step in this action plan must not violate the set of its pre-conditions and post-conditions.\"\"\"\n"
             parsel_graph(defined_fns, codegen, debug=debug, sample_only=sample_only)
             if sample_only:
               continue
-            success_save_path = save_file.replace(".ss", ".success.ss")
+            success_save_path = save_file.replace(".ss", f"_{sketch_solution_idx}.success.ss")
             if not os.path.exists(success_save_path):
               with open(success_save_path, "w") as f:
                 f.write("\n".join(attempt_solution))
-            python_save_path = save_file.replace(".ss", ".py")
+            python_save_path = save_file.replace(".ss", f"_{sketch_solution_idx}.py")
             if not os.path.exists(python_save_path):
               write_to_file(python_save_path, defined_fns)
             # plan_save_path = save_file.replace(".ss", ".txt")
@@ -137,7 +149,7 @@ def main(problem, debug=False, sample_only=False):
             continue
           except:
             # Write to file
-            failed_save_path = save_file.replace(".ss", ".failed.ss")
+            failed_save_path = save_file.replace(".ss", f"_{sketch_solution_idx}.failed.ss")
             if not os.path.exists(failed_save_path):
               with open(failed_save_path, "w") as f:
                 f.write("\n".join(attempt_solution))

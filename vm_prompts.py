@@ -152,7 +152,7 @@ TRANSLATE to Parsel.
 """
 )
 
-direct_prompt = (
+_direct_prompt = (
 """-----Solution-----
 # Here is an example for solving task "Write an email"
 \"\"\"
@@ -180,5 +180,48 @@ task_plan(): return a list of strings that represents an action plan to great gu
 
 # ANSWER in the above format, using at most 3 definitions besides the main definition:
 \"\"\"
+"""
+)
+
+direct_prompt = (
+"""
+An action plan is a list of strings that describes a sequence of steps to accomplish a task, To be correctly parsed, an action plan must be syntactically correct and contain only allowed actions and recognizable simple objects. Allowed actions: 'close' <arg1>, 'cut' <arg1>, 'drink' <arg1>, 'drop' <arg1>, 'eat' <arg1>, 'find' <arg1>, 'grab' <arg1>, 'greet' <arg1>, 'lie on' <arg1>, 'look at' <arg1>, 'open' <arg1>, 'plug in' <arg1>, 'plug out' <arg1>, 'point at' <arg1>, 'pour' <arg1> 'into' <arg2>, 'pull' <arg1>, 'push' <arg1>, 'put' <arg1> 'on' <arg2>, 'put' <arg1> 'in' <arg2>, 'put back' <arg1>, 'take off' <arg1>, 'put on' <arg1>, 'read' <arg1>, 'release' <arg1>, 'rinse' <arg1>, 'run to'  <arg1>, 'scrub' <arg1>, 'sit on' <arg1>, 'sleep', 'squeeze' <arg1>, 'stand up', 'switch off' <arg1>, 'switch on' <arg1>, 'touch' <arg1>, 'turn to' <arg1>, 'type on' <arg1>, 'wake up', 'walk to' <arg1>, 'wash' <arg1>, 'watch' <arg1>, 'wipe' <arg1>. To satisfy the common-sense constraints, each action step in this action plan must not violate the set of its pre-conditions and post-conditions. Write code outlines to solve the following tasks:
+
+Task to solve:
+Cook some food
+\"\"\"
+task_plan(): return a list of strings that represents an action plan to cook some food.
+    find_and_walk_to_object(object): return a list of strings that represents an action plan find and walk to an object.
+    switch_on_oven(): return a list of strings that represents an action plan to switch on oven.
+    cook_food_in_oven(): return a list of strings that represents an action plan to cook food in oven.
+\"\"\"
+
+Task to solve:
+Write an email
+\"\"\"
+task_plan(): return a list of strings that represents an action plan to write an email.
+    find_an_object_in_place(place, object): return a list of strings that represents an action plan to go to the splace and find the object.
+    find_a_computer(): return a list of strings that represents an action plan to find a computer.
+      find_an_object_in_place
+    find_a_keyboard(): return a list of strings that represents an action plan to find a keyboard.
+      find_an_object_in_place
+    type_an_email(): return a list of strings that represents an action plan to type an email using the computer and keyboard.
+\"\"\"
+
+Task to solve:
+Put a mug on the stall and bread on the desk
+\"\"\"
+task_plan(): return a list of strings that represents an action plan to put a mug on the stall and bread on the desk.
+    put_object_on(object, place): return a list of strings that represents an action plan to put an object in a place.
+\"\"\"
+
+Task to solve:
+Greet guests
+\"\"\"
+task_plan(): return a list of strings that represents an action plan to great guests.
+    walk_to_place(place): return a list of strings that represents an action plan to walk to a place.
+    great_person(person): return a list of strings that represents an action plan to find a person and great the person.
+\"\"\"
+
 """
 )

@@ -21,22 +21,6 @@ from sentence_transformers import SentenceTransformer
 from sentence_transformers import util as st_utils
 import json
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# translation_lm = SentenceTransformer("stsb-roberta-large").to(device)
-
-# # create action embeddings using Translated LM
-# with open('language-planner/src/available_actions.json', 'r') as f:
-#     action_list = json.load(f)
-# action_list_embedding = torch.load("language-planner/src/action_list_embedding.pt", map_location=torch.device('cpu') )
-
-# # helper function for finding similar sentence in a corpus given a query
-# def find_most_similar(query_str, corpus_embedding):
-#     query_embedding = translation_lm.encode(query_str, convert_to_tensor=True, device=device)
-#     # calculate cosine similarity against each candidate sentence in the corpus
-#     cos_scores = st_utils.pytorch_cos_sim(query_embedding, corpus_embedding)[0].detach().cpu().numpy()
-#     # retrieve high-ranked index and similarity score
-#     most_similar_idx, matching_score = np.argmax(cos_scores), np.max(cos_scores)
-#     return most_similar_idx, matching_score
 
 def add_node(graph, n):
     graph['nodes'].append(n)
@@ -70,100 +54,35 @@ def setup():
     return comm
 
 def init_graph(comm, graph):
-
-    sofa = find_nodes(graph, class_name='sofa')[-2]
-
-    # add_node(graph, {'class_name': 'cat', 
-    #                 'category': 'Animals', 
-    #                 'id': 1000, 
-    #                 'properties': [], 
-    #                 'states': []})
-    # add_edge(graph, 1000, 'ON', sofa['id'])
-
-    add_node(graph, {'class_name': 'bread', 
-                    'id': 1000, 
-                    'properties': [], 
-                    'states': []})
-
-    floor = find_nodes(graph, class_name='floor')[1]
-
-    add_node(graph, {'class_name': 'table', 
-                    'id': 1001, 
-                    'properties': [], 
-                    'states': []}) ## somehow this just refuses to be added ...
-
-    add_edge(graph, 1000, 'ON', sofa['id'])
-    add_edge(graph, 1001, 'ON', floor['id'])
-
-    # add_node(graph, {'class_name': 'desk', 
-    #                 'id': 1003, 
-    #                 'properties': [], 
-    #                 'states': []})
-    # add_edge(graph, 1003, 'ON', floor['id'])
-
-    # add_node(graph, {'class_name': 'donut', 
-    #                 'id': 1002, 
-    #                 'properties': ['GRABBABLE',], 
-    #                 'states': []})
-
-    # add_edge(graph, 1002, 'ON', sofa['id'])
-    
-
-
-    success, message = comm.expand_scene(graph)
-    assert success
     comm.add_character('chars/Female2', initial_room='kitchen')
-    # s, g = comm.environment_graph()
-
-    # script = ['<char0> [Walk] <sofa> ({})'.format(sofa['id']),
-    #       '<char0> [Find] <donut> ({})'.format(get_obj_id("donut", g))]
-
-    # success, message = comm.render_script(script=script,
-    #                             processing_time_limit=60,
-    #                             find_solution=False,
-    #                             image_width=320,
-    #                             image_height=240,  
-    #                             skip_animation=True,
-    #                             recording=False,
-    #                             save_pose_data=False,
-    #                             file_name_prefix='relax')
-    # print(success, message)
-
     s, g = comm.environment_graph()
     return g
 
 import re
 
-NL_ACTIONS = [['close'], ['cut'], ['drink'], ['drop'], ['eat'], ['find'], ['grab'], ['greet'], ['lie on'], ['look at'], ['move'], ['open'], ['plug in'], ['plug out'], ['point at'], ['pour', 'into'], ['pull'], ['push'], ['put', 'on'], ['put', 'in'], ['put back'], ['take off'], ['put on'], ['read'], ["release"], ['rinse'], ['run to'], ['scrub'], ['sit on'], ['sleep'], ['squeeze'], ['stand up'], ['switch off'], ['switch on'], ['touch'], ['turn to'], ['type on'], ['wake up'], ['walk to'], ['wash'], ['watch'], ['wipe']]
-M_ACTIONS = ['[CLOSE]', '[CUT]', '[DRINK]', '[DROP]', '[EAT]', '[FIND]', '[GRAB]', '[GREET]', '[LIE]', '[LOOKAT]', '[MOVE]', '[OPEN]', '[PLUGIN]', '[PLUGOUT]', '[POINTAT]', '[POUR]', '[PULL]', '[PUSH]', '[PUTBACK]', '[PUTIN]', '[PUTOBJBACK]', '[PUTOFF]', '[PUTON]', '[READ]', '[RELEASE]', '[RINSE]', '[RUN]', '[SCRUB]', '[SIT]', '[SLEEP]', '[SQUEEZE]', '[STANDUP]', '[SWITCHOFF]', '[SWITCHON]', '[TOUCH]', '[TURNTO]', '[TYPE]', '[WAKEUP]', '[WALK]', '[WASH]', '[WATCH]', '[WIPE]']
+NL_ACTIONS = [['close'], ['cut'], ['drink'], ['drop'], ['eat'], ['find'], ['grab'], ['greet'], ['lie on'], ['look at'], ['move'], ['open'], ['plug in'], ['plug out'], ['point at'], ['pour', 'into'], ['pull'], ['push'], ['put back'], ['take off'], ['put on'], ['put', 'on'], ['put', 'in'], ['read'], ["release"], ['rinse'], ['run to'], ['scrub'], ['sit on'], ['sleep'], ['squeeze'], ['stand up'], ['switch off'], ['switch on'], ['touch'], ['turn to'], ['type on'], ['wake up'], ['walk to'], ['wash'], ['watch'], ['wipe']]
+M_ACTIONS = ['[CLOSE]', '[CUT]', '[DRINK]', '[DROP]', '[EAT]', '[FIND]', '[GRAB]', '[GREET]', '[LIE]', '[LOOKAT]', '[MOVE]', '[OPEN]', '[PLUGIN]', '[PLUGOUT]', '[POINTAT]', '[POUR]', '[PULL]', '[PUSH]', '[PUTOBJBACK]', '[PUTOFF]', '[PUTON]', '[PUTBACK]', '[PUTIN]', '[READ]', '[RELEASE]', '[RINSE]', '[RUN]', '[SCRUB]', '[SIT]', '[SLEEP]', '[SQUEEZE]', '[STANDUP]', '[SWITCHOFF]', '[SWITCHON]', '[TOUCH]', '[TURNTO]', '[TYPE]', '[WAKEUP]', '[WALK]', '[WASH]', '[WATCH]', '[WIPE]']
 
 def get_obj_id(obj, graph):
     return 1
-    print(obj)
-    # import pdb;pdb.set_trace()
-    try:
-        return [node['id'] for node in graph['nodes'] if node['class_name'] == obj][0]
-    except:
-        return [node['id'] for node in graph['nodes'] if node['class_name'].endswith(obj)][0]
 
 def formalize_script(gen_script, graph):
-    # with open("language-planner/src/available_actions.json") as f:
-    #     available_actions = json.load(f)
-    # pass
     script = []
     
     for l in gen_script:
-        # most_similar_idx, matching_score = find_most_similar(l, action_list_embedding)
-        # l = action_list[most_similar_idx]
         print(l)
         l = " " + l + " "
+        has_action = False
         for acts_idx, acts in enumerate(NL_ACTIONS):
             if all([" " + a + " " in l for a in acts]):
                 for a in acts:
                     l = l.replace(" " + a + " ", "|")
                 objects = l.split("|")[1:]
+                objects = list(filter(lambda x : len(x.strip()) > 0, objects ))
                 l = M_ACTIONS[acts_idx] + " " + " ".join(["<{}> ({})".format( re.sub(r'[\W_]+','_', obj.lower().strip()), get_obj_id(re.sub(r'[\W_]+','_', obj.lower().strip()), graph)) for obj in objects])
+                has_action = True
                 break
+        assert has_action
         script.append(l)
     return script
 
@@ -182,9 +101,7 @@ def check_executability(string, graph_dict):
     name_equivalence = utils.load_name_equivalence()
     executor = ScriptExecutor(graph, name_equivalence)
 
-    # executable, final_state, _ = executor.execute(script)
     try:
-        # executable, final_state, _ = executor.execute(script) sometimes errors out for bad reasons??
         state_enum = executor.find_solutions(script)
         executable = state_enum is not None
     except AttributeError:
@@ -204,12 +121,13 @@ def check_executability(string, graph_dict):
 
     if executable:
         able_to_be_executed = True
-        return able_to_be_parsed, True, state_enum
+        return able_to_be_parsed, True, None
     else:
         print(executor.info.get_error_string())
         return able_to_be_parsed, able_to_be_executed, None
 
 def test_script(gen_script, strict = False):    
+    gen_script = list(filter(lambda x : len(x.strip()) > 0, gen_script ))
     cache_file = "virtual_home_test_graph_4.json"
     if os.path.exists(cache_file) and not strict:
         with open(cache_file, 'r') as f:
@@ -219,13 +137,14 @@ def test_script(gen_script, strict = False):
         comm.reset(4)
         success, graph = comm.environment_graph()
 
-        # graph = init_graph(comm, graph)
+        graph = init_graph(comm, graph)
         with open(cache_file, 'w') as f:
             json.dump(graph, f)
 
     print(gen_script)
-    # gen_script = ['grab cup', 'put cup on table', 'grab bread', 'put bread on desk']
     script = formalize_script(gen_script, graph)
+    if len(script) == 0:
+        return False
 
     print(script)
     ### check soft execution via executor.find_solutions; mainly check whether stuff are possible to parse and execute in any way
@@ -233,10 +152,10 @@ def test_script(gen_script, strict = False):
     
     
     print(able_to_be_parsed, able_to_be_executed)
-    # assert able_to_be_parsed
+    # assert able_to_be_parsedå
     # assert able_to_be_executed
     if not (able_to_be_parsed and able_to_be_executed):
-        return "not executable"
+        return False
     if strict:
         ### execution check; too expensive for on the fly
         script = ["<char0> " + s for s in script]
@@ -252,16 +171,33 @@ def test_script(gen_script, strict = False):
                                     file_name_prefix='relax')
         print(message)
         if not success:
-            return "not executable"
-    return "executable"
+            return False
+    return True
 
 if __name__ == "__main__":
     
-    
     from programs.saycan import task_plan
     gen_script = task_plan()
-    # gen_script = ['grab mug']
-    gen_script = gen_script
-    test_script(gen_script, strict = True)            
+    test_script(gen_script, strict=False)
+
+    # correct = 0
+    # for i in range(88):
+    #     gen_script = [ s.split(":")[1].lower().strip()  for s in  open(f"baseline_vh_generated/eval_{i}.txt").read().split("\n")[:-1]]
+    #     try:
+    #         # gen_script = ['grab mug']
+    #         if test_script(gen_script, strict=False):
+    #             correct +=1     
+    #     except:
+    #         continue
+    # print("correct: ",correct)  
+
+    # correct = 0
+    # for i in range(88):
+    #     try:
+    #         plan = __import__(f'vh_generated.eval_test_{i}')
+    #         correct +=1
+    #     except:
+    #         continue
+    # print("correct: ",correct)
 
    
