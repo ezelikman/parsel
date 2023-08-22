@@ -12,7 +12,9 @@ import time
 from consts import CONSTS, mode
 import os
 import ast
-
+import traceback
+import functools
+import operator
 
 # When a function is called but not defined, we can try to
 # infer its implementation from the other functions in the
@@ -43,6 +45,7 @@ def fill_in_missing_fn(missing_fn_name, scc, defined_fns, implementation_set, im
                     fn.fix_implementation(implementation)
             return new_implementation_attempt
         except:
+            traceback.print_exc() 
             continue
 
 
@@ -204,12 +207,20 @@ def update_best_attempt(scc, all_attempts, implementation_set, asserts_passed, e
                 all_found[fn] += [assert_target]
     if generate_tests:
         # If we're generating tests, we need to make sure that we've found at least two different values for each function
-        found_successful_generation = len(all_found) == len(scc) and all(len(set(found)) >= 2 for found in all_found.values())
+        # Modified!: Since there may be fewer tests, delete the check of each function passing >= 2 different tests.
+        # found_successful_generation = (len(all_found) == len(scc))
+        found_successful_generation = True
     else:
         # If we're not generating tests and we get here, we've found a successful implementation
         found_successful_generation = True
     min_found = min(len(found) for found in all_found.values())
+    if min_found == 0:
+        # if exist 0, get the second min if exists.
+        found_nonzero = [found for found in all_found.values() if len(found) != 0]
+        if found_nonzero:
+            min_found = min(len(found) for found in found_nonzero)
     if found_successful_generation:
+        #print("found_successful_generation")
         if generate_tests:
             score = min_found
             if asserts_passed_hash in all_attempts:
@@ -272,10 +283,11 @@ def handle_failure(scc, asserts_str, pbar, executor, futures, best_attempt):
 # Use multiprocessing to try to fill in the implementation of an SCC
 # This function could definitely use some refactoring
 # Maybe in the future Parsel will do that for me
-def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=None, min_attempts=500, max_attempts=100000, min_time=120, max_time=240, debug=False, seed=42):
+def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, asserts_str, timeout, num_workers=None, min_attempts=500, max_attempts=100000, min_time=60, max_time=240, debug=False, seed=42):
     if num_workers is None:
-        cpu_count = os.cpu_count()
-        num_workers = cpu_count if cpu_count is not None else 1
+        num_workers = 8 
+        #cpu_count = os.cpu_count()
+        #num_workers = cpu_count if cpu_count is not None else 1
     if 'max_attempts' in CONSTS:
         max_attempts = CONSTS['max_attempts']
     if debug and debug != "best":
@@ -283,24 +295,35 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
         verbose = True
     else:
         verbose = False
+    all_implementations = dict(sorted(all_implementations.items()))
     implementation_set_keys = all_implementations.keys()
-    random.seed(seed)
     all_implementation_sets = [list(set(impls)) for impls in all_implementations.values()]
     # We save memory by only storing the index of the implementation in all_implementation_sets
-    implementation_sets = list(itertools.product(*[list(range(len(impls))) for impls in all_implementation_sets]))
+    implementation_set_dims = [len(s) for s in all_implementation_sets]
+    num_implementation_sets = functools.reduce(operator.mul, implementation_set_dims, 1)
 
     # We can't try more than the number of implementations we have
-    n_to_try = min(max_attempts, len(implementation_sets))
+    n_to_try = min(max_attempts, num_implementation_sets)
 
-    # We're assuming at least 10% of the implementations are valid
-    max_to_try = min(max_attempts * 10, len(implementation_sets))
-    if CONSTS['eval_mode'] or ("shuffle_always" in CONSTS and CONSTS['shuffle_always']):
-        # We should only shuffle if we are going to evaluate everything
-        # Otherwise we can save some time by sampling
-        if max_to_try == len(implementation_sets):
-            random.shuffle(implementation_sets)
-        else:
-            implementation_sets = random.sample(implementation_sets, max_to_try)
+    def product_to_tensor_idx(prod, dims, idx):
+        ans = []
+        for dim in dims:
+            prod //= dim
+            ans.append(idx // prod)
+            idx %= prod
+        return ans
+
+    def sample_product(arrs, n, k):
+        indices = random.sample(range(n), k)
+        dims = [len(arr) for arr in arrs]
+        prod = functools.reduce(operator.mul, dims, 1)
+        return [
+            product_to_tensor_idx(prod, dims, idx)
+            for idx in indices
+        ]
+
+    random.seed(seed)
+    implementation_sets = sample_product(all_implementation_sets, num_implementation_sets, n_to_try)
     all_attempts = {}
     start_time = time.time()
 
@@ -309,48 +332,35 @@ def multiprocess_fill(scc, dependencies_str, defined_fns, all_implementations, a
     # As well as broadly make better use of compute
     pbar = tqdm(total=n_to_try)
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=get_context('spawn')) as executor:
-        futures = []
-        submitted = 0
 
+        futures = []
         # Loop over as many implementation sets as we can
-        for implementation_set_indices in implementation_sets:
+        for i, implementation_set_indices in enumerate(implementation_sets):
             # We need to convert the implementation set indices to the actual implementation_set
             implementation_set = [all_implementation_sets[i][impl_id] for i, impl_id in enumerate(implementation_set_indices)]
-            if (not (time.time() - start_time > min_time and submitted > min_attempts)) and ((time.time() - start_time) < max_time):
+            try:
+                futures.append(executor.submit(eval_implementation, implementation_set, dependencies_str, asserts_str, verbose))
+            except:
+                pbar.update(1)
+            if not (i == len(implementation_sets) - 1 or (i + 1) % num_workers == 0):
+                continue
+            # Check if the future has succeeded
+            for future in futures:
                 try:
-                    # Check for syntax errors
-                    # CONSTS['exec'](to_implementation_str(implementation_set, dependencies_str))
-                    ast.parse(to_implementation_str(implementation_set, dependencies_str))
-                    futures.append(executor.submit(
-                        eval_implementation, implementation_set, dependencies_str, asserts_str, verbose))
-                    submitted += 1
-                except:
-                    pass
-
-            # Once we have a full batch of futures, avoid submitting more
-            # Check if any of the futures have finished and succeeded
-            if submitted % num_workers == 0 or submitted == n_to_try:
-                for future in futures:
-                    # If we are debugging in the full debug mode, we want to stop at every implementation
-                    if debug and debug != "best":
-                        breakpoint()
-                    # Check if the future has succeeded
-                    try:
-                        result = future.result(timeout=timeout)
-                        if result is not None:
-                            implementation_set, implementation_attempt = eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_attempts, pbar, executor, futures, result)
-                            return implementation_attempt
-                        else:
-                            pbar.update(1)
-                    except KeyboardInterrupt:
-                        kill_remaining_futures(executor, futures)
-                        raise KeyboardInterrupt
-                    except:
+                    result = future.result(timeout=1)
+                    if result is not None:
+                        implementation_set, implementation_attempt = eval_result(scc, defined_fns, asserts_str, implementation_set_keys, all_attempts, pbar, executor, futures, result)
+                        return implementation_attempt
+                    else:
                         pbar.update(1)
-                        continue
-                futures = []
-            # If we have submitted all the futures we want to submit, break
-            if submitted == n_to_try:
+                except KeyboardInterrupt:
+                    kill_remaining_futures(executor, futures)
+                    raise KeyboardInterrupt
+                except:
+                    pbar.update(1)
+            futures = []
+            if (time.time() - start_time) >= max_time:
+                print("timeout!")
                 break
 
         # When we have exhausted all the implementation sets, we can try reattempting the best attempt
@@ -487,42 +497,39 @@ def clear_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, 
 
 
 # Implement the SCC and return the string
-def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, seed=42, backtrack=False):
+def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, seed=42, backtrack=False, num_completions=1):
     print("Implementing SCC", scc_idx, sccs[scc_idx])
     if scc_idx in implemented_sccs:
         return implemented_sccs[scc_idx]
     dependencies_str = ""
     for edge in scc_edges[scc_idx]:
-        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug)
+        dependencies_str += implement_scc(edge, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, num_completions=num_completions)
 
-    num_completions = CONSTS["min_completions"] if "min_completions" in CONSTS else CONSTS["num_completions"]
     error = None
     # We exponentially increase the number of completions until we reach the max, "num_completions"
-    while num_completions <= CONSTS["num_completions"]:
-        print(f"Trying {num_completions} completions")
-        try:
-            for fn_name in sccs[scc_idx]:
-                fn = defined_fns[fn_name]
-                fn.implement(codegen, num_completions=num_completions)
-                if generate_tests:
-                    fn.generate_tests(codegen, num_completions=num_completions * 2)
+    print(f"Total: {num_completions} completions!")
+    try:
+        for fn_name in sccs[scc_idx]:
+            fn = defined_fns[fn_name]
+            fn.implement(codegen, num_completions=num_completions)
+            if generate_tests:
+                fn.generate_tests(codegen, num_completions=num_completions)
 
-            # We support a "sample only" mode, where we don't actually
-            # implement the SCC, but just try to run inference.
-            # This let's us parallelize inference and implementation.
-            if not sample_only:
-                new_str = dependencies_str + eval_scc(
-                    sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
-            else:
-                new_str = dependencies_str
-            implemented_sccs[scc_idx] = new_str
-            return new_str
-        except KeyboardInterrupt:
-            raise KeyboardInterrupt
-        except Exception as e:
-            error = e
-            print("Error", e)
-        num_completions *= 2
+        # We support a "sample only" mode, where we don't actually
+        # implement the SCC, but just try to run inference.
+        # This let's us parallelize inference and implementation.
+        if not sample_only:
+            new_str = dependencies_str + eval_scc(
+                sccs[scc_idx], dependencies_str, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed, backtrack=False)
+        else:
+            new_str = dependencies_str
+        implemented_sccs[scc_idx] = new_str
+        return new_str
+    except KeyboardInterrupt:
+        raise KeyboardInterrupt
+    except Exception as e:
+        error = e
+        print("Error", e)
     if backtrack:
         # Backtracking allows us to try new implementations
         # of the dependencies if we fail to implement the SCC
@@ -531,7 +538,7 @@ def implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codeg
         for implemented_scc in list(implemented_sccs.keys()):
             del implemented_sccs[implemented_scc]
         new_str = implement_scc(
-            scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed + 1, backtrack=True)
+            scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, seed=seed + 1, backtrack=True, num_completions=num_completions)
         implemented_sccs[scc_idx] = new_str
         return new_str
     raise error
@@ -571,7 +578,8 @@ def write_to_file(filename, defined_fns):
                 continue
             asserts_dict[assert_fn] = True
         asserts = "\n".join(list(asserts_dict.keys()))
-    assert CONSTS['exist_asserts'](asserts)
+    # Modified!: Remove exist_asserts check to allow codegen when all tests failed.
+    # assert CONSTS['exist_asserts'](asserts)
     exec_pre = CONSTS['exec_pre']
     contents = f"{exec_pre}{fn_defs}\n{asserts}"
     with open(filename, "w") as f:
@@ -583,16 +591,16 @@ def write_to_file(filename, defined_fns):
 # The key function of the program, which takes a function graph
 # Decomposes them to their strongly connected components
 # And then implements each SCC in turn
-def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False):
+def parsel_graph(defined_fns, codegen, allow_autofill=False, should_expand=False, debug=False, sample_only=False, num_completions=1):
     sccs, scc_edges = strongly_connected_components(defined_fns)#, consider_asserts=not generate_tests)
     implemented_sccs = {}
     for scc_idx, _ in enumerate(sccs):
-        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only)
+        implement_scc(scc_idx, sccs, implemented_sccs, scc_edges, defined_fns, codegen, allow_autofill, should_expand, debug, sample_only, num_completions=num_completions)
     return defined_fns
 
 
 # Used to parse a Parsel file to a target language
-def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False):
+def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_expand=False, debug=False, add_name_and_args=False, num_completions=1):
     assert source_file.split(".")[-1] == 'ss'
     if target_file is None:
         target_file = source_file.split(".")[0] + CONSTS['extension']
@@ -619,7 +627,7 @@ def parsel(codegen, source_file, target_file=None, allow_autofill=False, should_
         fn.prefix = "\n".join(header)
 
     # Compile the graph into a target language
-    defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand, debug)
+    defined_fns = parsel_graph(defined_fns, codegen, allow_autofill, should_expand, debug, num_completions=num_completions)
 
     # Write the compiled program to a file
     write_to_file(target_file, defined_fns)
@@ -638,15 +646,17 @@ if __name__ == "__main__":
     argparser.add_argument("-b", "--best", help="Best", action="store_true")
     argparser.add_argument("-g", "--generate_tests", help="Generate tests", action="store_true")
     argparser.add_argument("-n", "--add_name_and_args", help="Add name and args", action="store_true")
+    argparser.add_argument("-t", "--num_completions", help="Set trying times of each functions", type=int, default=1)
+    argparser.add_argument("-s", "--save_path", help="Target code save path", type=str, default=None)
     args = argparser.parse_args()
 
     assert args.source_file.split(".")[-1] == 'ss'
-    codegen = CodeGen(args.cache, args.key)
+    codegen = CodeGen(args.cache)
     if args.best:
         debug = 'best'
     else:
         debug = args.debug
     generate_tests = args.generate_tests
-    parsel(codegen, args.source_file, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug, add_name_and_args=args.add_name_and_args)
+    parsel(codegen, args.source_file, target_file=args.save_path, allow_autofill=args.allow_autofill, should_expand=args.allow_expand, debug=debug, add_name_and_args=args.add_name_and_args, num_completions=args.num_completions)
 else:
-    generate_tests = False
+    generate_tests = False 

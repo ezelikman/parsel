@@ -1,5 +1,6 @@
 from consts import CONSTS
 import random
+import re
 
 # Parsel representation of a function
 class Function:
@@ -19,29 +20,38 @@ class Function:
         self.children = []
         self.implementations = []
         self.fixed_implementation = None
+        self.pattern = re.compile("\s*def\s+(.+)\(.*\).*\:")
 
     # i.e. returns the function signature
     def header(self):
         return CONSTS["header_str"](self.name, self.args)
 
+    def get_use_names(self):
+        return [child.name for child in self.children if child.name != self.name]
+    
+    # Get uses function descriptions
+    def get_uses(self):
+        other_children = [child for child in self.children if child.name != self.name]
+        if other_children:
+            uses = []
+            for child in other_children:
+                ret_str = (" -> " + ", ".join(child.ret)) if child.ret else ""
+                uses.append(f"from utils import {child.name} # {child.name}({', '.join(child.args)}){ret_str}: {child.desc}")
+            return '\n'.join(uses)
+        
+    def get_uses_for_test(self):
+        other_children = [child for child in self.children if child.name != self.name]
+        if other_children:
+            uses = []
+            for child in other_children:
+                ret_str = (" -> " + ", ".join(child.ret)) if child.ret else ""
+                uses.append(f"  - def {child.name}({', '.join(child.args)}){ret_str}: {child.desc}")
+            return '\n'.join(uses)
+
     # Constructs prompt for code generation
     def get_codex_input(self):
         base_str = ""
         base_str += self.prefix
-        already_listed = [self.name]
-        for child in self.children:
-            if child.name in already_listed:
-                continue
-            already_listed.append(child.name)
-            ret_str = (" -> " + ", ".join(child.ret)) if child.ret else ""
-            if isinstance(CONSTS["desc_helper"], str):
-                base_str += CONSTS["desc_helper"].format(desc=child.desc)
-            else:
-                base_str += CONSTS["desc_helper"](child.desc)
-            base_str += CONSTS["sig_helper"].format(
-                sig=f"{child.name}({', '.join(child.args)}){ret_str}")
-            base_str += CONSTS["import"].format(name=child.name)
-            base_str += f"\n"
         if self.desc:
             if isinstance(CONSTS["desc_helper"], str):
                 base_str += CONSTS["desc_helper"].format(desc=self.desc)
@@ -49,11 +59,11 @@ class Function:
                 base_str += CONSTS["desc_helper"](self.desc)
         if self.ret and ', '.join(self.ret):
             base_str += CONSTS["ret_helper"].format(ret=', '.join(self.ret))
-        other_children = [child for child in self.children if child.name != self.name]
-        if other_children:
-            base_str += CONSTS["use_helper"].format(
-                uses=', '.join([child.name for child in other_children]))
         base_str += f"{self.header()}:\n"
+        if uses := self.get_uses():
+            base_str += CONSTS["use_helper"].format(
+                uses=uses
+            )
         if self.asserts:
             for cur_assert in self.asserts:
                 base_str += CONSTS["assert_helper"](cur_assert)
@@ -61,11 +71,14 @@ class Function:
 
     # Constructs prompt for code generation
     def get_codex_test_input(self):
-        base_str = self.get_codex_input()
-        base_str += f"""  pass
-
-# check the correctness of {self.name}
-assert"""
+        base_str = ""
+        base_str += f"# Please write an assert statement in python to check the correctness of {self.name}. Your function call should correspond to the header.\n"
+        base_str += f"{self.header()}:\n"
+        if uses := self.get_uses_for_test():
+            base_str += f"# The function(s) called by {self.name}:\n{uses} \n"
+        if self.desc:
+            base_str += f"# The description of {self.name}: {self.desc}.\n"
+        base_str += f"# You should only return a single line code, which is the assert statement. Omit the code of {self.name}, comments or any additional text.\n"
         return base_str
 
     # Convert Parsel-style asserts to asserts in the target language
@@ -84,12 +97,33 @@ assert"""
     def get_implementation_strs(self):
         def join_str(strs):
             return "\n".join(strs)
-        return [CONSTS["impl_helper"].format(
-            header=self.header(),
+        impl = [CONSTS["impl_helper"].format(
             impls=join_str(impl),
             asserts=join_str([
                 CONSTS["assert_helper"](cur_assert) for cur_assert in self.asserts]),
         ) for impl in self.implementations]
+        return impl
+
+    # Delete function defs of implemented functions
+    def code_transform(self, raw_code: list[str], implemented_functions: set[str]):
+        # When meet the line "def {implemented_functions}", omit lines until the line whose indent count <= its
+        is_omit = False
+        omit_indent = -1
+        code = []
+        for line in raw_code:
+            indent = len(line) - len(line.lstrip())
+            if is_omit: # in scope of implemented functions
+                if indent > omit_indent: continue
+                is_omit = False
+            if m := self.pattern.match(line): # meet func def
+                func_name = m.group(1)
+                if indent == 0 and func_name in implemented_functions: # Modified: Allow nested functions overwrite implemented functions?
+                    is_omit = True
+                    omit_indent = indent
+                    continue
+            if "from utils" not in line: # remove "from utils import *"
+                code.append(line)
+        return code
 
     # Call code model and optionally filter the results
     # Generate implementations for the function
@@ -97,7 +131,7 @@ assert"""
         if 'max_tokens' in CONSTS:
             max_tokens = CONSTS['max_tokens']
         else:
-            max_tokens = 500
+            max_tokens = 500 
         if num_completions is None:
             num_completions = CONSTS['num_completions']
         self.implementations = codex.generate(
@@ -110,20 +144,25 @@ assert"""
             indented_after_first_line=False,
             require=None,
             cache_key=None,
+            #logit_bias={711:-100} # ban ` def` to disallow nested func def.
         )
+        # Get function names in use list
+        implemented_functions = set(child.name for child in self.children if child.name != self.name)
+        # Remove useless code
+        self.implementations = [self.code_transform(raw_code, implemented_functions) for raw_code in self.implementations]
+        print(self.implementations)
         self.implementations = list(filter(CONSTS["impl_filter"], self.implementations))
         if "shuffle_implementations" in CONSTS and CONSTS["shuffle_implementations"]:
             random.shuffle(self.implementations)
-        self.implementations = self.implementations[:CONSTS['num_completions_eval']]
+        self.implementations = self.implementations[:num_completions]
 
     # Generate tests for this function
     def generate_tests(self, codex, num_completions=None):
         if num_completions is None:
-            num_completions = CONSTS['num_completions']
+            num_completions = CONSTS['num_completions_test']
         tests = codex.generate(
             codex_in=self.get_codex_test_input(),
-            num_completions=num_completions * 5,
-            max_tokens=100,
+            num_completions=num_completions * 2,
             temperature=0.6,
             stop="\n",
             indented=CONSTS['needs_indent'],
@@ -131,8 +170,15 @@ assert"""
             require=None,
             cache_key=None,
         )
-        tests = set([test[0] for test in tests if test])
-        self.asserts = tests
+        self.asserts = set()
+        for test in tests:
+            for line in test:
+                if 'assert' in line:
+                    print(line)
+                    line = line.replace("assert", "", 1)
+                    self.asserts.add(line)
+                    break
+        print(self.asserts)
         return tests
 
     # Converts any parent names to references to the actual parent functions
