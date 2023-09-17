@@ -1,4 +1,6 @@
 from contextlib import redirect_stdout
+import timeout_decorator
+import resource
 
 vis = False
 
@@ -65,6 +67,7 @@ if vis:
     exec_imports += "import clip\nfrom PIL import Image\n"
     exec_imports += "import torch\nfrom torch import nn\nfrom torch.nn import functional as F\n"
 
+@timeout_decorator.timeout(0.5)
 def eval_fn(fn_str):
     if vis:
         import clip
@@ -88,9 +91,17 @@ def eval_fn(fn_str):
     import numpy as np
     import random
     import heapq
+    import resource
     f = io.StringIO()
     with redirect_stdout(f):
-        exec(exec_imports + fn_str, locals())
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+            resource.setrlimit(resource.RLIMIT_AS, (1 << 32, hard))
+            exec(exec_imports + fn_str, locals())
+        except MemoryError:
+            raise Exception("Memory Limit Exceeded!")
+        finally:
+            resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
 
 def prepend_hash(lines_str):
     return "\n".join(["#" + line for line in lines_str.split("\n")])
@@ -158,29 +169,26 @@ def simplify_assert(assert_passed):
 
 CONSTS = {
     "rate_limit_tokens_text": 16000,
-    "num_completions": 64,
-    "min_completions": 8,
-    "num_completions_eval": 64,
+    "num_completions": 3,
+    "num_completions_test": 3,
     "text_model_name": None,
     "timeout": 0.5,
     "shuffle_always": True,
-    "num_text_completions": 8,
-    "max_text_completions": 8,
     "exec_pre": exec_imports,
     'strict_mode': False,
-    "needs_indent": True,
+    "needs_indent": False,
     "eval_mode": False,
     "fn_init": "def ",
     "exclude_init": ["from ", "import "],
     "fn_end": "return",
     "gen_stop": ["\ndef"],
     "import": "from helpers import {name}\n",
-    "header_str": lambda name, args: f"def {name}({', '.join(args)})",
+    "header_str": lambda name, args: f"# Function header: def {name}({', '.join(args)})",
     "sig_helper": "# Signature: {sig}\n",
-    "desc_helper": lambda desc: prepend_hash(f" Description: {desc}") + "\n",
+    "desc_helper": "# According the background mentioned above, you should implement a function which meets the following requirements:\n  - {desc}\n",
     "ret_helper": "# Returns: {ret}\n",
-    "use_helper": "# Uses: {uses}\n",
-    "impl_helper": "{header}:\n{impls}",
+    "use_helper": "# The code should start with the following imports outside of all function definitions:\n{uses}\n",
+    "impl_helper": "{impls}",
     "assert_helper": lambda _: "",
     "assert_check": assert_check,
     "assert_break": assert_break,

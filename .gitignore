@@ -5,4 +5,5 @@ keys/*
 cache.json
 old/*
 generated/*
-!programs/lisp.ss
+programs/*
+cache
